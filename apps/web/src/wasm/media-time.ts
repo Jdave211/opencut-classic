@@ -9,6 +9,9 @@ import {
 	type FrameRate,
 	type TimeCodeFormat,
 } from "opencut-wasm";
+import { roundMediaTime, type MediaTime } from "./media-time-rounding";
+export { roundMediaTime };
+export type { MediaTime };
 
 /**
  * Integer-tick time. Mirrors `MediaTime(i64)` in `rust/crates/time/src/media_time.rs`.
@@ -22,8 +25,6 @@ import {
  * Reading is free — `MediaTime` is assignable to `number`. Writing is gated —
  * a bare `number` is not assignable to `MediaTime`.
  */
-export type MediaTime = number & { readonly __mediaTime: unique symbol };
-
 export const TICKS_PER_SECOND = _TICKS_PER_SECOND();
 
 function isMediaTime(value: number): value is MediaTime {
@@ -56,24 +57,6 @@ export function mediaTime({ ticks }: { ticks: number }): MediaTime {
 	return requireMediaTime({
 		value: ticks,
 		context: "mediaTime()",
-	});
-}
-
-/**
- * Project a fractional value onto the integer-tick lattice.
- *
- * Rounds half away from zero (`-1.5 → -2`, `1.5 → 2`) and normalises `-0` to
- * `0`. The away-from-zero rule matches Rust's `.round()` and avoids the
- * `Math.round(-0.5) === -0` quirk that propagates `-0` into stored data.
- */
-export function roundMediaTime({ time }: { time: number }): MediaTime {
-	const roundedMagnitude = Math.round(Math.abs(time));
-	if (roundedMagnitude === 0) {
-		return ZERO_MEDIA_TIME;
-	}
-	return requireMediaTime({
-		value: time < 0 ? -roundedMagnitude : roundedMagnitude,
-		context: "roundMediaTime()",
 	});
 }
 

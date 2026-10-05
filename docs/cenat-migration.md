@@ -8,8 +8,22 @@ This fork runs alongside the existing Cenat editor. The existing editor and its 
 - A project can be created without Cenat services.
 - `ridge.mp4` from Cenat's bundled sample media was imported, inserted on the main track, previewed, and selected for property editing.
 - The production web build passes after pinning the root Next.js version and repairing several stale TypeScript call sites in the archived source.
-- The keybinding and storage migration test run passed 102 tests. One storage migration test still fails because Bun 1.2.18 cannot initialize the published `opencut-wasm` package in that test process (`wasm.__wbindgen_start is not a function`). This must be resolved before treating storage migration tests as a release gate.
+- The legacy storage migration suite now passes: pure tick rounding was separated from WASM startup, so tests no longer initialize the compositor merely to check a saved value.
 - Classic's own track/scene model, commands, snapping, selection, playback, and undo remain the editor's authority. We will not replace them with Cenat's timeline component.
+
+## Home and menu ownership
+
+Cenat's existing home, project menu, library, folders, account surface, and project creation flow remain the product entry point. Classic's `/projects` page is only a standalone fork test surface. The eventual product route will open a migrated project in Classic's editor from Cenat's existing home; this work must not replace Cenat's home with Classic's projects page.
+
+## First local project pilot
+
+- A real five-clip Cenat project JSON from the local project review artifacts was analyzed before any Classic project was created. The report found five linked media files, no blockers, and explicit 30 fps and frame-rounding warnings.
+- The report and pilot manifest are in `.cenat-migration/`, which is ignored by Git. Footage and project data remain local to the source and the browser's fork storage.
+- All five media files were imported into a new Classic project. A guarded migration screen verifies the source JSON hash, report status, media byte sizes and metadata, then writes the planned timeline to that new project.
+- The saved project was reopened: five clips were present in source order and the displayed duration was `00:15:36:22`, matching the report's 30 fps frame plan. Preview displayed real footage.
+- This source is a project JSON artifact, not a full Cenat snapshot record. History, messages, and account ownership have not been migrated. Full export parity has not yet been checked.
+
+To analyze another local project, run `bun scripts/cenat-compatibility.mjs --project <source.json> --assets <assets.json> --media-root <Cenat data directory> --out .cenat-migration/<report.json>`. A `blocked` report prevents the guarded import screen from applying it. Create a blank Classic project, import footage through its media panel, then open `/migrate/cenat/<destination-project-id>` and select the original JSON and its report. The importer refuses to replace a nonempty destination timeline.
 
 ## Capability map
 
@@ -36,8 +50,8 @@ This fork runs alongside the existing Cenat editor. The existing editor and its 
 
 ## First end-to-end slice
 
-Import one existing Cenat project with two video clips and linked media. Trim and move a clip in Classic, save/reload, apply one transition, add one title and one grade, issue one Jev edit, undo it, then export. Compare duration, frame boundaries, titles, color, and sound against the existing Cenat render. Any unsupported field must appear in the compatibility report before import.
+The first project pilot covers clips, media, frame timing, save/reload, and preview. The next gate is an export comparison, followed by transitions, titles, grades, audio processing, and Jev edits. Each new capability must appear in the compatibility report before import and pass its own UI, save/reload, preview, and export checks.
 
 ## Repository boundaries
 
-`/Users/davejaga/Desktop/startups/cenat` remains the working Cenat editor. This fork is at `/Users/davejaga/Desktop/startups/opencut-classic` on `codex/cenat-integration`. Media and project state in the local browser belong to the fork's own origin; no Cenat project data has been migrated yet.
+`/Users/davejaga/Desktop/startups/cenat` remains the working Cenat editor and home. This fork is at `/Users/davejaga/Desktop/startups/opencut-classic` on `codex/cenat-integration`. Media and project state in the local browser belong to the fork's own origin. The original Cenat account project and snapshot history remain unchanged.

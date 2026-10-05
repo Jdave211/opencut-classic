@@ -26,3 +26,6 @@ target/
 .cargo-tools/
 
 rust-migration-notes.md
+
+# Local Cenat project reports and media stay outside the public fork.
+.cenat-migration/

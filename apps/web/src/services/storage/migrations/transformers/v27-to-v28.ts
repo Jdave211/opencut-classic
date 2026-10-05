@@ -1,4 +1,4 @@
-import { roundMediaTime } from "@/wasm";
+import { roundMediaTime } from "@/wasm/media-time-rounding";
 import type { MigrationResult, ProjectRecord } from "./types";
 import { getProjectId, isRecord } from "./utils";
 
@@ -154,7 +154,9 @@ function migrateAnimationChannel({ channel }: { channel: unknown }): unknown {
 
 	return {
 		...channel,
-		keys: channel.keys.map((keyframe) => migrateAnimationKeyframe({ keyframe })),
+		keys: channel.keys.map((keyframe) =>
+			migrateAnimationKeyframe({ keyframe }),
+		),
 	};
 }
 
