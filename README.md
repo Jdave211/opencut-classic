@@ -4,9 +4,9 @@ This is the original OpenCut codebase. It's archived and no longer maintained.
 
 The rewrite is happening at [opencut-app/opencut](https://github.com/opencut-app/opencut).
 
-## Cenat integration fork
+## Cenat primary editor
 
-This is the primary editor opened from Cenat's home and project menu. It keeps OpenCut Classic's workspace and timeline while reading and saving Cenat projects, media, history, and Jev edits. See [Cenat editor integration](docs/cenat-editor-integration.md) for the current behavior. The [migration plan](docs/cenat-migration.md) records the earlier pilot and is no longer the product flow.
+This codebase supplies Cenat's primary editing screen. It uses the OpenCut Classic workspace and timeline while reading and saving the same Cenat projects, media, history, and Jev edits used by Cenat home. The editor and home are one product even though local development currently serves them from different ports. See [Cenat editor integration](docs/cenat-editor-integration.md) for the current behavior. The [migration plan](docs/cenat-migration.md) records the earlier pilot and is no longer the product flow.
 
 ## Sponsors
 

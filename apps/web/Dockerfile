@@ -8,6 +8,8 @@ ARG FREESOUND_CLIENT_ID
 ARG FREESOUND_API_KEY
 ARG NEXT_PUBLIC_MARBLE_API_URL=https://api.marblecms.com
 ARG MARBLE_WORKSPACE_KEY=build-placeholder
+ARG NEXT_PUBLIC_SITE_URL=http://localhost:3000
+ARG CENAT_API_URL=http://127.0.0.1:3001
 
 COPY package.json package.json
 COPY bun.lock bun.lock
@@ -26,7 +28,8 @@ ENV DATABASE_URL="postgresql://opencut:opencut@localhost:5432/opencut"
 ENV BETTER_AUTH_SECRET="build-time-secret"
 ENV UPSTASH_REDIS_REST_URL="http://localhost:8079"
 ENV UPSTASH_REDIS_REST_TOKEN="example_token"
-ENV NEXT_PUBLIC_SITE_URL="http://localhost:3000"
+ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
+ENV CENAT_API_URL=$CENAT_API_URL
 ENV NEXT_PUBLIC_MARBLE_API_URL=$NEXT_PUBLIC_MARBLE_API_URL
 ENV MARBLE_WORKSPACE_KEY=$MARBLE_WORKSPACE_KEY
 
@@ -38,6 +41,7 @@ RUN bun run build
 
 # Production image
 FROM base AS runner
+ARG CENAT_API_URL=http://127.0.0.1:3001
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -58,5 +62,6 @@ EXPOSE 3000
 
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV CENAT_API_URL=$CENAT_API_URL
 
 CMD ["bun", "apps/web/server.js"]
