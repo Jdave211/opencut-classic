@@ -12,7 +12,7 @@ import {
 import Link from "next/link";
 import { RenameProjectDialog } from "@/project/components/rename-project-dialog";
 import { DeleteProjectDialog } from "@/project/components/delete-project-dialog";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FaDiscord } from "react-icons/fa6";
 import { ExportButton } from "./export-button";
 import { CenatExportButton } from "./cenat-export-button";
@@ -31,6 +31,7 @@ import { cn } from "@/utils/ui";
 import { getCenatPrimarySession } from "@/lib/cenat-primary";
 
 export function EditorHeader() {
+	const isEmbeddedEditor = useSearchParams().get("cenat") === "1";
 	return (
 		<header className="bg-background flex h-[3.4rem] items-center justify-between px-3 pt-0.5">
 			<div className="flex items-center gap-1">
@@ -38,8 +39,8 @@ export function EditorHeader() {
 				<EditableProjectName />
 			</div>
 			<nav className="flex items-center gap-2">
-				{!getCenatPrimarySession() && <FeedbackPopover />}
-						{getCenatPrimarySession() ? <><CenatPreviewButton /><CenatExportButton /></> : <ExportButton />}
+				{!isEmbeddedEditor && <FeedbackPopover />}
+				{isEmbeddedEditor ? <><CenatPreviewButton /><CenatExportButton /></> : <ExportButton />}
 				<ThemeToggle />
 			</nav>
 		</header>
@@ -47,6 +48,7 @@ export function EditorHeader() {
 }
 
 function ProjectDropdown() {
+	const isEmbeddedEditor = useSearchParams().get("cenat") === "1";
 	const [openDialog, setOpenDialog] = useState<
 		"delete" | "rename" | "shortcuts" | null
 	>(null);
@@ -128,11 +130,11 @@ function ProjectDropdown() {
 				<DropdownMenuTrigger asChild>
 					<Button variant="ghost" size="icon" className="p-1 rounded-sm size-8">
 						<Image
-							src={getCenatPrimarySession() ? "/cenat-mark.svg" : DEFAULT_LOGO_URL}
+							src={isEmbeddedEditor ? "/cenat-mark.svg" : DEFAULT_LOGO_URL}
 							alt="Project thumbnail"
 							width={32}
 							height={32}
-							className={getCenatPrimarySession() ? "size-5" : "invert dark:invert-0 size-5"}
+							className={isEmbeddedEditor ? "size-5" : "invert dark:invert-0 size-5"}
 						/>
 					</Button>
 				</DropdownMenuTrigger>
@@ -152,7 +154,7 @@ function ProjectDropdown() {
 						Shortcuts
 					</DropdownMenuItem>
 
-					{!getCenatPrimarySession() && <><DropdownMenuSeparator />
+					{!isEmbeddedEditor && <><DropdownMenuSeparator />
 					<DropdownMenuItem asChild icon={<FaDiscord className="size-4!" />}>
 						<Link
 							href={SOCIAL_LINKS.discord}

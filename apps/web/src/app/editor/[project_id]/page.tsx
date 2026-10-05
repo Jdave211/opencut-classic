@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import {
 	ResizablePanelGroup,
 	ResizablePanel,
@@ -38,7 +38,9 @@ import {
 
 export default function Editor() {
 	const params = useParams<{ project_id: string }>();
+	const searchParams = useSearchParams();
 	const projectId = params.project_id;
+	const isEmbeddedEditor = searchParams.get("cenat") === "1";
 
 	return (
 		<MobileGate>
@@ -49,9 +51,9 @@ export default function Editor() {
 					<div className="min-h-0 min-w-0 flex-1">
 						<EditorLayout />
 					</div>
-					{!getCenatPrimarySession() && <Onboarding />}
-					{!getCenatPrimarySession() && <MigrationDialog />}
-					{!getCenatPrimarySession() && <ChangelogNotification />}
+					{!isEmbeddedEditor && <Onboarding />}
+					{!isEmbeddedEditor && <MigrationDialog />}
+					{!isEmbeddedEditor && <ChangelogNotification />}
 				</div>
 			</EditorProvider>
 		</MobileGate>

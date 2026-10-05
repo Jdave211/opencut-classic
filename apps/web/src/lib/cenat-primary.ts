@@ -42,7 +42,7 @@ type CenatAsset = {
 	id: string; name: string; url: string; thumbnail?: string;
 	duration: number; width: number; height: number; hasAudio: boolean; kind?: string;
 };
-type Reply = { channel: string; projectId: string; requestId: string; type: string; project?: CenatProject; assets?: CenatAsset[]; revision?: string; error?: string };
+type Reply = { channel: string; projectId: string; requestId: string; type: string; project?: CenatProject; editorProject?: unknown; assets?: CenatAsset[]; revision?: string; error?: string };
 
 function isCenatClip(value: unknown): value is CenatClip {
 	return !!value && typeof value === "object" &&
@@ -204,6 +204,47 @@ function nativeTextMatches({ element, overlay, canvas }: { element: TextElement;
 
 export function getCenatPrimarySession(): CenatPrimarySession | null { return active; }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function isEditorProject(value: unknown): value is TProject {
+	if (!isRecord(value) || !isRecord(value.metadata) || !isRecord(value.settings) || !Array.isArray(value.scenes)) return false;
+	return typeof value.metadata.id === "string" && typeof value.metadata.name === "string" &&
+		typeof value.version === "number" && isRecord(value.settings.canvasSize) &&
+		value.scenes.some((scene: unknown) => isRecord(scene) && scene.isMain === true) &&
+		value.scenes.every((scene: unknown) => isRecord(scene) && isRecord(scene.tracks) &&
+			isRecord(scene.tracks.main) && Array.isArray(scene.tracks.main.elements) &&
+			Array.isArray(scene.tracks.overlay) && Array.isArray(scene.tracks.audio));
+}
+
+function reviveEditorProject({ value, id }: { value: unknown; id: string }): TProject | null {
+	if (!isEditorProject(value)) return null;
+	const candidate = value;
+	if (candidate.metadata?.id !== id || candidate.version !== CURRENT_PROJECT_VERSION ||
+		!Array.isArray(candidate.scenes) || !candidate.scenes.some((scene) => scene?.isMain && scene?.tracks?.main) ||
+		!candidate.settings?.canvasSize) return null;
+	const date = (input: unknown): Date | null => {
+		const parsed = input instanceof Date ? input : typeof input === "string" ? new Date(input) : null;
+		return parsed && Number.isFinite(parsed.getTime()) ? parsed : null;
+	};
+	const createdAt = date(candidate.metadata.createdAt);
+	const updatedAt = date(candidate.metadata.updatedAt);
+	if (!createdAt || !updatedAt) return null;
+	const scenes: TProject["scenes"] = [];
+	for (const scene of candidate.scenes) {
+		const sceneCreatedAt = date(scene.createdAt);
+		const sceneUpdatedAt = date(scene.updatedAt);
+		if (!sceneCreatedAt || !sceneUpdatedAt) return null;
+		scenes.push({ ...scene, createdAt: sceneCreatedAt, updatedAt: sceneUpdatedAt });
+	}
+	return { ...candidate, metadata: { ...candidate.metadata, createdAt, updatedAt }, scenes };
+}
+
+function editorSignature(project: TProject): string {
+	return JSON.stringify(project, (key: string, value: unknown) => key === "updatedAt" ? undefined : value);
+}
+
 export class CenatPrimarySession {
 	private revision: string;
 	private original: CenatProject;
@@ -211,6 +252,7 @@ export class CenatPrimarySession {
 	private overlapIds: Set<string>;
 	private fontIds: Set<string>;
 	private saveQueue: Promise<void> = Promise.resolve();
+	private savedEditorSignature: string | null = null;
 	private previewing = new Set<string>();
 	private previewFailures = new Map<string, { revision: string; retryAt: number }>();
 	private unbindSelection: (() => void) | null = null;
@@ -262,6 +304,12 @@ export class CenatPrimarySession {
 				hasAudio: source.hasAudio, fps: canonicalProject.fps || 30,
 				thumbnailUrl: source.thumbnail ? cenatUrl(source.thumbnail) : undefined,
 			});
+		}
+		const savedEditor = reviveEditorProject({ value: reply.editorProject, id });
+		if (savedEditor) {
+			session.savedEditorSignature = editorSignature(savedEditor);
+			active = session;
+			return { session, project: savedEditor, media };
 		}
 		const scene = buildDefaultScene({ name: "Main scene", isMain: true });
 		const fps = canonicalProject.fps || 30;
@@ -986,16 +1034,51 @@ export class CenatPrimarySession {
 		return JSON.stringify(candidate) === JSON.stringify(this.original) ? this.original : candidate;
 	}
 
+	private editorProjectForSave({ project, canonical }: { project: TProject; canonical: CenatProject }): TProject {
+		// Audio buffers and rendered preview files are session resources. The
+		// persistent timeline references durable source media and keeps all edits.
+		const saved: unknown = JSON.parse(JSON.stringify(project, (key: string, value: unknown) => key === "buffer" ? undefined : value));
+		if (!isEditorProject(saved)) throw new Error("The editor timeline could not be saved.");
+		for (const scene of saved.scenes) {
+			if (!scene.isMain) continue;
+			scene.tracks.main.elements = scene.tracks.main.elements.map((element) => {
+				if (!element.cenatEdit) return element;
+				const clip = canonical.clips.find((candidate) => candidate.id === element.id);
+				if (!clip) return element;
+				const edit = { ...element.cenatEdit, clip: structuredClone(clip) };
+				if (element.mediaId !== edit.proxyMediaId || edit.proxyMediaId === edit.sourceMediaId) {
+					return { ...element, cenatEdit: edit };
+				}
+				const source = this.assets.find((asset) => asset.id === edit.sourceMediaId);
+				if (!source) return element;
+				const common = {
+					mediaId: edit.sourceMediaId,
+					sourceDuration: ticks(source.duration),
+					trimStart: ticks(clip.in),
+					trimEnd: ticks(Math.max(0, source.duration - clip.out)),
+					cenatEdit: { ...edit, proxyMediaId: edit.sourceMediaId },
+				};
+				return element.type === "video"
+					? { ...element, ...common, retime: clip.speed === 1 ? undefined : { ...element.retime, rate: clip.speed } }
+					: { ...element, ...common };
+			});
+		}
+		return saved;
+	}
+
 	async save({ project }: { project: TProject }): Promise<void> {
 		const canonical = this.toCenatProject({ project });
-		if (JSON.stringify(canonical) === JSON.stringify(this.original)) return;
+		const editorProject = this.editorProjectForSave({ project, canonical });
+		const savedSignature = editorSignature(editorProject);
+		if (JSON.stringify(canonical) === JSON.stringify(this.original) && savedSignature === this.savedEditorSignature) return;
 		const previous = this.saveQueue;
 		const next = previous.catch(() => {}).then(async () => {
-			if (JSON.stringify(canonical) === JSON.stringify(this.original)) return;
-			const reply = await request({ projectId: this.id, type: "save", data: { revision: this.revision, project: canonical } });
+			if (JSON.stringify(canonical) === JSON.stringify(this.original) && savedSignature === this.savedEditorSignature) return;
+			const reply = await request({ projectId: this.id, type: "save", data: { revision: this.revision, project: canonical, editorProject } });
 			if (!reply.revision) throw new Error("Cenat did not confirm the save.");
 			this.revision = reply.revision;
 			this.original = canonical;
+			this.savedEditorSignature = savedSignature;
 		});
 		this.saveQueue = next;
 		await next;
