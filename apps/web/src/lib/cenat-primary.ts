@@ -251,6 +251,7 @@ export class CenatPrimarySession {
 	private assets: CenatAsset[];
 	private overlapIds: Set<string>;
 	private fontIds: Set<string>;
+	private maxTextLanes: number;
 	private saveQueue: Promise<void> = Promise.resolve();
 	private savedEditorSignature: string | null = null;
 	private previewing = new Set<string>();
@@ -258,13 +259,14 @@ export class CenatPrimarySession {
 	private unbindSelection: (() => void) | null = null;
 	readonly id: string;
 
-	private constructor({ id, project, assets, revision, overlapIds, fontIds }: { id: string; project: CenatProject; assets: CenatAsset[]; revision: string; overlapIds: Set<string>; fontIds: Set<string> }) {
+	private constructor({ id, project, assets, revision, overlapIds, fontIds, maxTextLanes = 64 }: { id: string; project: CenatProject; assets: CenatAsset[]; revision: string; overlapIds: Set<string>; fontIds: Set<string>; maxTextLanes?: number }) {
 		this.id = id;
 		this.original = project;
 		this.assets = assets;
 		this.revision = revision;
 		this.overlapIds = overlapIds;
 		this.fontIds = fontIds;
+		this.maxTextLanes = maxTextLanes;
 	}
 
 	static async open({ id, onProgress }: { id: string; onProgress?: (message: string) => void }): Promise<{ session: CenatPrimarySession; project: TProject; media: MediaAsset[] }> {
@@ -279,12 +281,13 @@ export class CenatPrimarySession {
 			throw new Error("The Cenat editing controls could not be reached through this editor.");
 		});
 		if (!catalogResponse.ok) throw new Error("Could not load Cenat transition timing.");
-		const catalog: { transitions: { id: string; overlap: boolean }[]; fonts: string[] } = await catalogResponse.json().catch(() => {
+		const catalog: { transitions: { id: string; overlap: boolean }[]; fonts: string[]; maxTextLanes?: number } = await catalogResponse.json().catch(() => {
 			throw new Error("The Cenat editing controls returned an incomplete response.");
 		});
 		const overlapIds = new Set(catalog.transitions.filter((entry) => entry.overlap).map((entry) => entry.id));
 		const fontIds = new Set(catalog.fonts);
-		const session = new CenatPrimarySession({ id, project: canonicalProject, assets: canonicalAssets, revision: reply.revision, overlapIds, fontIds });
+		const maxTextLanes = Number.isInteger(catalog.maxTextLanes) && (catalog.maxTextLanes || 0) > 0 ? catalog.maxTextLanes : 64;
+		const session = new CenatPrimarySession({ id, project: canonicalProject, assets: canonicalAssets, revision: reply.revision, overlapIds, fontIds, maxTextLanes });
 		const referenced = new Set([
 			...canonicalProject.clips.map((clip) => clip.assetId),
 			...(canonicalProject.tracks || []).flatMap((track) => track.items.map((item) => item.assetId)),
@@ -686,7 +689,7 @@ export class CenatPrimarySession {
 			const lane = row.cenatLane ?? rows.slice(0, index).filter((candidate) =>
 				(candidate.cenatTextKind || candidate.elements[0]?.cenatTextKind ||
 					(candidate.name.toLowerCase().includes("caption") ? "subtitle" : "text")) === kind).length;
-			if (lane > 63) throw new Error("Cenat supports up to 64 title or caption rows.");
+			if (lane >= this.maxTextLanes) throw new Error(`This project supports up to ${this.maxTextLanes} title or caption rows.`);
 			laneCounts[kind === "subtitle" ? "caption" : "title"] = Math.max(laneCounts[kind === "subtitle" ? "caption" : "title"], lane + 1);
 			if (row.hidden && row.elements.length) throw new Error(`Show the ${row.name} row before saving it to Cenat.`);
 			for (const element of row.elements) {
@@ -819,7 +822,7 @@ export class CenatPrimarySession {
 		for (const row of rows) {
 			if (row.hidden && row.elements.length) throw new Error(`Show the ${row.name} row before saving it.`);
 			const lane = row.cenatGraphicLane || 0;
-			if (lane > 63) throw new Error("Cenat supports up to 64 sticker and graphic rows.");
+			if (lane >= this.maxTextLanes) throw new Error(`This project supports up to ${this.maxTextLanes} sticker and graphic rows.`);
 			for (const element of row.elements) {
 				if (element.type !== "sticker" || element.hidden)
 					throw new Error(`${element.name} must be visible on a Cenat sticker or graphic row.`);
