@@ -223,7 +223,7 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 			}
 			const projectId = editor.project.getActive().metadata.id;
 			const rendered = await renderCenatClip({
-				clip: draft,
+				clip: { ...draft, overlays: undefined },
 				fps: edit.fps,
 				aspect: edit.aspect,
 				onProgress: setProgress,

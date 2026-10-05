@@ -1,6 +1,6 @@
 import type { MediaAsset } from "@/media/types";
 import type { TProject } from "@/project/types";
-import type { AudioElement, AudioTrack, ImageElement, OverlayTrack, TimelineElement, VideoElement, VideoTrack } from "@/timeline/types";
+import type { AudioElement, AudioTrack, ImageElement, OverlayTrack, TextElement, TextTrack, TimelineElement, VideoElement, VideoTrack } from "@/timeline/types";
 import { buildDefaultScene } from "@/timeline/scenes";
 import { buildDefaultParamValues, getBuiltInElementParams } from "@/params/registry";
 import { roundMediaTime } from "@/wasm/media-time-rounding";
@@ -18,6 +18,12 @@ type CenatClip = {
 	speed: number; brightness: number; volume: number;
 	[key: string]: unknown;
 };
+type CenatOverlay = {
+	id: string; kind: "text" | "subtitle" | "sticker" | "graphic";
+	start: number; end: number; text?: string; x: number; y: number;
+	size: number; color: string; background: boolean; lane?: number;
+	openCutGroupId?: string; [key: string]: unknown;
+};
 type CenatItem = {
 	id: string; assetId: string; in: number; out: number; speed: number; at: number;
 	volume: number; x: number; y: number; width: number; height: number;
@@ -26,7 +32,7 @@ type CenatItem = {
 };
 type CenatTrack = { id: string; name: string; kind: "video" | "audio"; muted: boolean; items: CenatItem[]; gain?: number; locked?: boolean; [key: string]: unknown };
 type CenatMarker = { id: string; at: number; end?: number; label: string; color: string; note?: string; [key: string]: unknown };
-type CenatProject = { name: string; aspect: string; fps?: number; clips: CenatClip[]; tracks?: CenatTrack[]; markers?: CenatMarker[]; [key: string]: unknown };
+type CenatProject = { name: string; aspect: string; fps?: number; clips: CenatClip[]; tracks?: CenatTrack[]; markers?: CenatMarker[]; textLanes?: { title?: number; caption?: number; graphic?: number }; [key: string]: unknown };
 type CenatAsset = {
 	id: string; name: string; url: string; thumbnail?: string;
 	duration: number; width: number; height: number; hasAudio: boolean; kind?: string;
@@ -42,6 +48,13 @@ function isCenatClip(value: unknown): value is CenatClip {
 		"speed" in value && typeof value.speed === "number" &&
 		"brightness" in value && typeof value.brightness === "number" &&
 		"volume" in value && typeof value.volume === "number";
+}
+function isCenatOverlay(value: unknown): value is CenatOverlay {
+	return !!value && typeof value === "object" &&
+		"id" in value && typeof value.id === "string" &&
+		"kind" in value && (value.kind === "text" || value.kind === "subtitle") &&
+		"start" in value && typeof value.start === "number" &&
+		"end" in value && typeof value.end === "number";
 }
 function isCenatItem(value: unknown): value is CenatItem {
 	return !!value && typeof value === "object" &&
@@ -132,6 +145,50 @@ function paramNumber({ element, key, fallback }: { element: TimelineElement; key
 	const value = element.params[key];
 	return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
+function cenatOverlays(clip: CenatClip): CenatOverlay[] {
+	return Array.isArray(clip.overlays) ? clip.overlays.filter(isCenatOverlay) : [];
+}
+type CenatTimedWord = { text: string; start: number; end: number; [key: string]: unknown };
+function cenatTimedWords(value: unknown): CenatTimedWord[] | null {
+	if (!Array.isArray(value)) return null;
+	const candidates: unknown[] = value;
+	if (!candidates.every((word): word is CenatTimedWord => !!word && typeof word === "object" &&
+		"text" in word && typeof word.text === "string" &&
+		"start" in word && typeof word.start === "number" && Number.isFinite(word.start) &&
+		"end" in word && typeof word.end === "number" && Number.isFinite(word.end))) return null;
+	return candidates;
+}
+function textParams({ overlay, canvas }: { overlay: CenatOverlay; canvas: { width: number; height: number } }) {
+	return {
+		...buildDefaultParamValues(getBuiltInElementParams({ type: "text" })),
+		content: overlay.text || "Text",
+		fontFamily: typeof overlay.font === "string" ? overlay.font : "Arial",
+		fontSize: overlay.size * canvas.height,
+		color: overlay.color,
+		fontWeight: typeof overlay.weight === "number" && overlay.weight >= 600 ? "bold" : "normal",
+		fontStyle: overlay.italic ? "italic" : "normal",
+		"background.enabled": overlay.background,
+		"transform.positionX": (overlay.x - 0.5) * canvas.width,
+		"transform.positionY": (overlay.y - 0.5) * canvas.height,
+		"transform.rotate": typeof overlay.rotation === "number" ? overlay.rotation : 0,
+	};
+}
+function textLane({ kind, lane }: { kind: "text" | "subtitle"; lane: number }): TextTrack {
+	return {
+		id: `cenat-${kind}-${lane}`, type: "text",
+		name: `${kind === "subtitle" ? "Captions" : "Titles"}${lane ? ` ${lane + 1}` : ""}`,
+		hidden: false, elements: [], cenatTextKind: kind, cenatLane: lane,
+	};
+}
+function textKind({ element, track }: { element: TextElement; track: TextTrack }): "text" | "subtitle" {
+	return element.cenatTextKind || track.cenatTextKind || (track.name.toLowerCase().includes("caption") ? "subtitle" : "text");
+}
+const TEXT_PARAM_KEYS = ["content", "fontFamily", "fontSize", "color", "fontWeight", "fontStyle", "background.enabled",
+	"transform.positionX", "transform.positionY", "transform.rotate"] as const;
+function nativeTextMatches({ element, overlay, canvas }: { element: TextElement; overlay: CenatOverlay; canvas: { width: number; height: number } }): boolean {
+	const expected = textParams({ overlay, canvas });
+	return TEXT_PARAM_KEYS.every((key) => element.params[key] === expected[key]);
+}
 
 export function getCenatPrimarySession(): CenatPrimarySession | null { return active; }
 
@@ -140,17 +197,19 @@ export class CenatPrimarySession {
 	private original: CenatProject;
 	private assets: CenatAsset[];
 	private overlapIds: Set<string>;
+	private fontIds: Set<string>;
 	private saveQueue: Promise<void> = Promise.resolve();
 	private previewing = new Set<string>();
 	private unbindSelection: (() => void) | null = null;
 	readonly id: string;
 
-	private constructor({ id, project, assets, revision, overlapIds }: { id: string; project: CenatProject; assets: CenatAsset[]; revision: string; overlapIds: Set<string> }) {
+	private constructor({ id, project, assets, revision, overlapIds, fontIds }: { id: string; project: CenatProject; assets: CenatAsset[]; revision: string; overlapIds: Set<string>; fontIds: Set<string> }) {
 		this.id = id;
 		this.original = project;
 		this.assets = assets;
 		this.revision = revision;
 		this.overlapIds = overlapIds;
+		this.fontIds = fontIds;
 	}
 
 	static async open({ id, onProgress }: { id: string; onProgress?: (message: string) => void }): Promise<{ session: CenatPrimarySession; project: TProject; media: MediaAsset[] }> {
@@ -160,9 +219,10 @@ export class CenatPrimarySession {
 		const canonicalAssets = reply.assets;
 		const catalogResponse = await fetch(`${API}/api/editor/catalog`);
 		if (!catalogResponse.ok) throw new Error("Could not load Cenat transition timing.");
-		const catalog: { transitions: { id: string; overlap: boolean }[] } = await catalogResponse.json();
+		const catalog: { transitions: { id: string; overlap: boolean }[]; fonts: string[] } = await catalogResponse.json();
 		const overlapIds = new Set(catalog.transitions.filter((entry) => entry.overlap).map((entry) => entry.id));
-		const session = new CenatPrimarySession({ id, project: canonicalProject, assets: canonicalAssets, revision: reply.revision, overlapIds });
+		const fontIds = new Set(catalog.fonts);
+		const session = new CenatPrimarySession({ id, project: canonicalProject, assets: canonicalAssets, revision: reply.revision, overlapIds, fontIds });
 		const referenced = new Set([
 			...canonicalProject.clips.map((clip) => clip.assetId),
 			...(canonicalProject.tracks || []).flatMap((track) => track.items.map((item) => item.assetId)),
@@ -265,6 +325,50 @@ export class CenatPrimarySession {
 			}
 			overlay.push(nativeTrack);
 		}
+		const textGroups = new Map<string, { kind: "text" | "subtitle"; lane: number; start: number; end: number; parts: { clipId: string; overlay: CenatOverlay }[] }>();
+		for (const clip of canonicalProject.clips) {
+			const clipStart = starts.get(clip.id) || 0;
+			for (const text of cenatOverlays(clip)) {
+				if (text.kind !== "text" && text.kind !== "subtitle") continue;
+				const from = Math.max(clip.in, text.start);
+				const to = Math.min(clip.out, text.end);
+				if (to <= from) continue;
+				const start = clipStart + (from - clip.in) / (clip.speed || 1);
+				const finish = clipStart + (to - clip.in) / (clip.speed || 1);
+				const groupId = text.openCutGroupId || `${clip.id}:${text.id}`;
+				const group = textGroups.get(groupId);
+				if (group) {
+					group.start = Math.min(group.start, start);
+					group.end = Math.max(group.end, finish);
+					group.parts.push({ clipId: clip.id, overlay: structuredClone(text) });
+				} else textGroups.set(groupId, { kind: text.kind, lane: text.lane || 0,
+					start, end: finish, parts: [{ clipId: clip.id, overlay: structuredClone(text) }] });
+			}
+		}
+		const textTracks = new Map<string, TextTrack>();
+		for (const kind of ["text", "subtitle"] as const) {
+			const maxLane = Math.max(0,
+				kind === "text" ? (canonicalProject.textLanes?.title || 0) - 1
+					: (canonicalProject.textLanes?.caption || 0) - 1,
+				...Array.from(textGroups.values()).filter((group) => group.kind === kind).map((group) => group.lane));
+			for (let lane = 0; lane <= maxLane; lane++) {
+				const track = textLane({ kind, lane });
+				textTracks.set(`${kind}:${lane}`, track);
+				overlay.push(track);
+			}
+		}
+		for (const [id, group] of textGroups) {
+			const base = group.parts[0].overlay;
+			const track = textTracks.get(`${group.kind}:${group.lane}`);
+			if (!track) continue;
+			track.elements.push({
+				id, type: "text", name: group.kind === "subtitle" ? "Caption" : "Title",
+				startTime: ticks(group.start), duration: ticks(group.end - group.start),
+				trimStart: ticks(0), trimEnd: ticks(0),
+				params: textParams({ overlay: base, canvas: canvasSize }),
+				cenatTextKind: group.kind, cenatOverlays: group.parts,
+			});
+		}
 		const now = new Date();
 		const project: TProject = {
 			metadata: { id, name: canonicalProject.name, duration: ticks(end), createdAt: now, updatedAt: now },
@@ -345,12 +449,11 @@ export class CenatPrimarySession {
 			(typeof source.filter === "string" && source.filter !== "none") ||
 			(typeof source.effect === "string" && source.effect !== "none") ||
 			(typeof source.animation === "string" && source.animation !== "none") ||
-			(Array.isArray(source.overlays) && source.overlays.length > 0) ||
 			(source.volume !== 0 && source.volume !== 1);
 		if (!needsRender) return;
 		this.previewing.add(elementId);
 		try {
-			const rendered = await renderCenatClip({ clip: source, fps: element.cenatEdit.fps, aspect: element.cenatEdit.aspect });
+			const rendered = await renderCenatClip({ clip: { ...source, overlays: undefined }, fps: element.cenatEdit.fps, aspect: element.cenatEdit.aspect });
 			const current = editor.scenes.getActiveSceneOrNull()?.tracks.main.elements.find((item) => item.id === elementId);
 			if (current?.type !== "video" || !current.cenatEdit || current.mediaId !== current.cenatEdit.sourceMediaId ||
 				JSON.stringify(current.cenatEdit.clip) !== JSON.stringify(source)) return;
@@ -369,6 +472,141 @@ export class CenatPrimarySession {
 		} catch (error) {
 			console.error("Cenat clip preview could not be prepared:", error);
 		} finally { this.previewing.delete(elementId); }
+	}
+
+	private mapTextTracks({ project, clips, main }: { project: TProject; clips: CenatClip[]; main: TProject["scenes"][number] }): {
+		clips: CenatClip[]; textLanes?: CenatProject["textLanes"];
+	} {
+		const rows = main.tracks.overlay.filter((track): track is TextTrack => track.type === "text");
+		const entries = rows.flatMap((track) => track.elements.map((element) => ({ track, element })));
+		const oldGroups = new Set(this.original.clips.flatMap((clip) => cenatOverlays(clip)
+			.filter((overlay) => overlay.kind === "text" || overlay.kind === "subtitle")
+			.map((overlay) => overlay.openCutGroupId || `${clip.id}:${overlay.id}`)));
+		const originalStarts = clipStarts({ clips: this.original.clips, overlapIds: this.overlapIds });
+		const frame = 1 / (this.original.fps || 30);
+		const canvas = project.settings.canvasSize;
+		const mainUnchanged = JSON.stringify(clips.map(({ id, in: sourceIn, out, speed }) => [id, sourceIn, out, speed])) ===
+			JSON.stringify(this.original.clips.map(({ id, in: sourceIn, out, speed }) => [id, sourceIn, out, speed]));
+		const same = mainUnchanged && oldGroups.size === entries.length && entries.every(({ track, element }) => {
+			const parts = element.cenatOverlays;
+			const first = parts?.[0]?.overlay;
+			if (!parts?.length || !isCenatOverlay(first) || element.cenatTextStyle || track.hidden || textKind({ element, track }) !== first.kind ||
+				track.cenatLane !== (first.lane || 0)) return false;
+			let start = Number.POSITIVE_INFINITY;
+			let end = Number.NEGATIVE_INFINITY;
+			for (const part of parts) {
+				const clip = this.original.clips.find((entry) => entry.id === part.clipId);
+				const original = clip && cenatOverlays(clip).find((overlay) => overlay.id === part.overlay.id);
+				if (!clip || !original || JSON.stringify(original) !== JSON.stringify(part.overlay)) return false;
+				const clipStart = originalStarts.get(clip.id) || 0;
+				start = Math.min(start, clipStart + (Math.max(clip.in, original.start) - clip.in) / (clip.speed || 1));
+				end = Math.max(end, clipStart + (Math.min(clip.out, original.end) - clip.in) / (clip.speed || 1));
+			}
+			return Math.abs(seconds(element.startTime) - start) < frame / 4 &&
+				Math.abs(seconds(element.duration) - (end - start)) < frame / 4 &&
+				nativeTextMatches({ element, overlay: first, canvas });
+		});
+		if (same) return { clips };
+		const copy = clips.map((clip) => ({ ...clip,
+			overlays: Array.isArray(clip.overlays) ? clip.overlays.filter((overlay) => !isCenatOverlay(overlay)) : [] }));
+		const starts = clipStarts({ clips: copy, overlapIds: this.overlapIds });
+		const endOfStory = Math.max(0, ...copy.map((clip) => (starts.get(clip.id) || 0) + (clip.out - clip.in) / (clip.speed || 1)));
+		const laneCounts = { title: 0, caption: 0, graphic: this.original.textLanes?.graphic || 0 };
+		for (const [index, row] of rows.entries()) {
+			const kind = row.cenatTextKind || row.elements[0]?.cenatTextKind || (row.name.toLowerCase().includes("caption") ? "subtitle" : "text");
+			const lane = row.cenatLane ?? rows.slice(0, index).filter((candidate) =>
+				(candidate.cenatTextKind || candidate.elements[0]?.cenatTextKind ||
+					(candidate.name.toLowerCase().includes("caption") ? "subtitle" : "text")) === kind).length;
+			if (lane > 63) throw new Error("Cenat supports up to 64 title or caption rows.");
+			laneCounts[kind === "subtitle" ? "caption" : "title"] = Math.max(laneCounts[kind === "subtitle" ? "caption" : "title"], lane + 1);
+			if (row.hidden && row.elements.length) throw new Error(`Show the ${row.name} row before saving it to Cenat.`);
+			for (const element of row.elements) {
+				if (element.hidden) throw new Error(`Show ${element.name} before saving it to Cenat.`);
+				if (element.effects?.length || element.animations) throw new Error(`Use the Cenat text style tab for ${element.name}'s effects and motion.`);
+				const defaults = buildDefaultParamValues(getBuiltInElementParams({ type: "text" }));
+				const unsupported = ["textAlign", "textDecoration", "letterSpacing", "lineHeight", "background.color",
+					"background.cornerRadius", "background.paddingX", "background.paddingY", "background.offsetX", "background.offsetY",
+					"transform.scaleX", "transform.scaleY", "opacity", "blendMode"];
+				if (unsupported.some((key) => element.params[key] !== defaults[key]))
+					throw new Error(`Some OpenCut text controls on ${element.name} have no Cenat render equivalent yet. Use the Cenat text style tab.`);
+				const elementKind = textKind({ element, track: row });
+				const base = element.cenatOverlays?.[0]?.overlay;
+				const original = isCenatOverlay(base) ? base : undefined;
+				const content = String(element.params.content ?? "").trim();
+				if (!content || content.length > 240) throw new Error("Use 1–240 characters per title or caption.");
+				const font = String(element.params.fontFamily || "Arial");
+				if (!this.fontIds.has(font)) throw new Error(`The font ${font} is not available in Cenat. Choose a Cenat font before saving.`);
+				const start = seconds(element.startTime);
+				const end = start + seconds(element.duration);
+				if (start < -frame / 4 || end > endOfStory + frame / 4 || end <= start)
+					throw new Error(`${element.name} must fit within the video sequence.`);
+				let segments = 0;
+				for (const clip of copy) {
+					const clipStart = starts.get(clip.id) || 0;
+					const clipEnd = clipStart + (clip.out - clip.in) / (clip.speed || 1);
+					const from = Math.max(start, clipStart);
+					const to = Math.min(end, clipEnd);
+					if (to - from < frame / 2) continue;
+					const sourceStart = clip.in + (from - clipStart) * (clip.speed || 1);
+					const sourceEnd = clip.in + (to - clipStart) * (clip.speed || 1);
+					const oldPart = element.cenatOverlays?.find((part) => part.clipId === clip.id)?.overlay;
+					if (original?.words && !oldPart) throw new Error(`${element.name} has source-timed words. Keep it on its original source clip, or add a new caption for the other clip.`);
+					const basis = { ...(isCenatOverlay(oldPart) ? oldPart : original || {}), ...(element.cenatTextStyle || {}) };
+					const expected = isCenatOverlay(basis) ? textParams({ overlay: basis, canvas }) : null;
+					const changed = (key: typeof TEXT_PARAM_KEYS[number]) => !expected || element.params[key] !== expected[key];
+					const x = Math.max(0.05, Math.min(0.95, 0.5 + paramNumber({ element, key: "transform.positionX", fallback: 0 }) / canvas.width));
+					const y = Math.max(0.05, Math.min(0.95, 0.5 + paramNumber({ element, key: "transform.positionY", fallback: 0 }) / canvas.height));
+					const size = Math.max(0.025, Math.min(0.3, paramNumber({ element, key: "fontSize", fallback: 48 }) / canvas.height));
+					const next: CenatOverlay = {
+						...basis, id: isCenatOverlay(oldPart) ? oldPart.id : `${element.id}:${clip.id}`,
+						kind: elementKind, text: content, start: sourceStart, end: sourceEnd,
+						x: changed("transform.positionX") ? x : Number(basis.x ?? x),
+						y: changed("transform.positionY") ? y : Number(basis.y ?? y),
+						size: changed("fontSize") ? size : Number(basis.size ?? size),
+						color: changed("color") ? String(element.params.color || "#ffffff") : String(basis.color ?? "#ffffff"),
+						background: changed("background.enabled") ? Boolean(element.params["background.enabled"]) : Boolean(basis.background),
+						font: changed("fontFamily") ? font : basis.font,
+						weight: changed("fontWeight") ? (element.params.fontWeight === "bold" ? 700 : 400) : basis.weight,
+						italic: changed("fontStyle") ? element.params.fontStyle === "italic" : basis.italic,
+						rotation: changed("transform.rotate") ? paramNumber({ element, key: "transform.rotate", fallback: 0 }) : basis.rotation,
+						lane, openCutGroupId: element.id,
+					};
+					if (elementKind === "subtitle") {
+						const words = cenatTimedWords(next.words);
+						if (next.words !== undefined && (!words || !words.length))
+							throw new Error(`${element.name} has invalid word timing. Edit the timed words in the Cenat text tab.`);
+						if (words) {
+							const originalWords = cenatTimedWords(oldPart?.words);
+							const wordText = words.map((word) => word.text.trim()).join(" ");
+							if (content !== wordText && content !== oldPart?.text)
+								throw new Error(`${element.name} has timed words. Edit their wording in the Cenat text tab so the caption stays synchronized.`);
+							const unchangedWords = originalWords && JSON.stringify(words) === JSON.stringify(originalWords);
+							const shift = unchangedWords && isCenatOverlay(oldPart) ? sourceStart - oldPart.start : 0;
+							const shifted = words.map((word) => ({ ...word, start: word.start + shift, end: word.end + shift }));
+							if (shifted.some((word) => !word.text.trim() || word.end <= word.start ||
+								word.start < sourceStart - frame / 4 || word.end > sourceEnd + frame / 4))
+								throw new Error(`${element.name}'s timed words no longer fit inside the caption. Adjust the caption length or word times.`);
+							next.words = shifted;
+						}
+					}
+					if (elementKind === "subtitle") {
+						delete next.remotionTemplate;
+						delete next.titleMotion;
+						delete next.titleCurve;
+						delete next.titleContext;
+						delete next.depth;
+					} else delete next.words;
+					const target = copy.find((candidate) => candidate.id === clip.id);
+					if (!target) throw new Error("A title lost its source clip.");
+					const overlays = Array.isArray(target.overlays) ? target.overlays : [];
+					overlays.push(next);
+					target.overlays = overlays;
+					segments++;
+				}
+				if (!segments) throw new Error(`${element.name} does not overlap a video clip.`);
+			}
+		}
+		return { clips: copy, textLanes: laneCounts };
 	}
 
 	toCenatProject({ project }: { project: TProject }): CenatProject {
@@ -406,8 +644,10 @@ export class CenatPrimarySession {
 		});
 		const starts = clipStarts({ clips, overlapIds: this.overlapIds });
 		const canvas = project.settings.canvasSize;
+		const text = this.mapTextTracks({ project, clips, main });
 		const tracks: CenatTrack[] = [];
 		for (const track of [...main.tracks.overlay, ...main.tracks.audio]) {
+			if (track.type === "text") continue;
 			if (track.type !== "video" && track.type !== "audio") {
 				if (track.elements.length) throw new Error(`${track.name} contains an OpenCut layer that cannot be saved to Cenat. Add text through the clip's Text controls for now.`);
 				continue;
@@ -505,9 +745,10 @@ export class CenatPrimarySession {
 				label: bookmark.note || original?.label || "Marker", color: bookmark.color || original?.color || "#f5c542",
 				...(bookmark.duration !== undefined ? { end: at + seconds(bookmark.duration) } : { end: undefined }) };
 		});
-		const candidate = { ...this.original, name: project.metadata.name, clips,
+		const candidate = { ...this.original, name: project.metadata.name, clips: text.clips,
 			...(this.original.tracks || tracks.length ? { tracks } : {}),
-			...(this.original.markers || markers.length ? { markers } : {}) };
+			...(this.original.markers || markers.length ? { markers } : {}),
+			...(text.textLanes ? { textLanes: text.textLanes } : {}) };
 		return JSON.stringify(candidate) === JSON.stringify(this.original) ? this.original : candidate;
 	}
 
@@ -553,6 +794,30 @@ export class CenatPrimarySession {
 			job = await response.json();
 		}
 		if (!job.url?.startsWith("/exports/")) throw new Error("The export is missing its video file.");
+		onProgress?.(100);
+		return new URL(job.url, API).href;
+	}
+
+	async preview({ project, onProgress }: {
+		project: TProject;
+		onProgress?: (value: number) => void;
+	}): Promise<string> {
+		await this.save({ project });
+		const started = await fetch(`${API}/api/preview`, {
+			method: "POST", headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ project: this.toCenatProject({ project }) }),
+		});
+		let job: { id: string; status: string; progress?: number; error?: string; url?: string } = await started.json();
+		if (!started.ok) throw new Error(job.error || "Could not start the exact preview.");
+		while (job.status !== "complete") {
+			if (job.status === "failed") throw new Error(job.error || "The exact preview failed.");
+			onProgress?.(job.progress || 0);
+			await new Promise((resolve) => setTimeout(resolve, 1200));
+			const response = await fetch(`${API}/api/export/${encodeURIComponent(job.id)}`);
+			if (!response.ok) throw new Error("The exact preview status is unavailable.");
+			job = await response.json();
+		}
+		if (!job.url?.startsWith("/previews/")) throw new Error("The exact preview is missing its video file.");
 		onProgress?.(100);
 		return new URL(job.url, API).href;
 	}

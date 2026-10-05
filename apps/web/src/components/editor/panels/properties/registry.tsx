@@ -30,6 +30,9 @@ import { GraphicTab } from "@/graphics/components/graphic-tab";
 import { OcShapesIcon } from "@/components/icons";
 import { CenatEditsTab } from "./components/cenat-edits-tab";
 import { CenatTrackTab } from "./components/cenat-track-tab";
+import { CenatTextTools } from "./components/cenat-text-tools";
+import { CenatTextTab } from "./components/cenat-text-tab";
+import { getCenatPrimarySession } from "@/lib/cenat-primary";
 
 function buildCenatTrackTab({ element }: { element: AudioElement | ImageElement | VideoElement }): PropertiesTabDef {
 	return {
@@ -241,6 +244,8 @@ function getTextConfig({
 		defaultTab: "text",
 		tabs: [
 			buildTextTab({ element }),
+			...(getCenatPrimarySession() ? [{ id: "cenat", label: "Cenat", icon: <HugeiconsIcon icon={TextFontIcon} size={16} />,
+				content: ({ trackId }: TabContentProps) => <CenatTextTab key={`${element.id}:${JSON.stringify(element.cenatTextStyle)}`} element={element} trackId={trackId} /> }] : []),
 			buildTransformTab({ element }),
 			buildBlendingTab({ element }),
 		],
@@ -268,7 +273,8 @@ function getVideoConfig({
 				section({ id: "color", label: "Color", icon: <HugeiconsIcon icon={RainDropIcon} size={16} /> }),
 				section({ id: "effects", label: "Effects", icon: <HugeiconsIcon icon={MagicWand05Icon} size={16} /> }),
 				section({ id: "transitions", label: "Transitions", icon: <HugeiconsIcon icon={MagicWand05Icon} size={16} /> }),
-				section({ id: "text", label: "Text", icon: <HugeiconsIcon icon={TextFontIcon} size={16} /> }),
+				{ id: "text", label: "Text", icon: <HugeiconsIcon icon={TextFontIcon} size={16} />,
+					content: () => <CenatTextTools clip={element} /> },
 				...(showAudioTab ? [section({ id: "audio", label: "Audio", icon: <HugeiconsIcon icon={MusicNote03Icon} size={16} /> })] : []),
 				buildSpeedTab({ element }),
 			],

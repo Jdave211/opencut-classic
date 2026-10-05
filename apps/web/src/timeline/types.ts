@@ -48,6 +48,9 @@ export interface TextTrack extends BaseTrack {
 	type: "text";
 	elements: TextElement[];
 	hidden: boolean;
+	/** Cenat title/caption lane represented as a native OpenCut row. */
+	cenatTextKind?: "text" | "subtitle";
+	cenatLane?: number;
 }
 
 export interface AudioTrack extends BaseTrack {
@@ -152,6 +155,10 @@ export interface TextElement extends BaseTimelineElement {
 	type: "text";
 	hidden?: boolean;
 	effects?: Effect[];
+	/** Original Cenat overlay fragments kept for lossless save and cross-cut text. */
+	cenatOverlays?: { clipId: string; overlay: Record<string, unknown> }[];
+	cenatTextKind?: "text" | "subtitle";
+	cenatTextStyle?: Record<string, unknown>;
 }
 
 export interface StickerElement extends BaseTimelineElement {

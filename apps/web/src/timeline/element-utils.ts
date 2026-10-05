@@ -6,6 +6,7 @@ import {
 	type CreateEffectElement,
 	type CreateGraphicElement,
 	type CreateTimelineElement,
+	type CreateTextElement,
 	type CreateVideoElement,
 	type CreateImageElement,
 	type CreateStickerElement,
@@ -104,7 +105,7 @@ export function buildTextElement({
 }: {
 	raw: Partial<Omit<TextElement, "type" | "id">>;
 	startTime: MediaTime;
-}): CreateTimelineElement {
+}): CreateTextElement {
 	const t = raw as Partial<TextElement>;
 
 	return {

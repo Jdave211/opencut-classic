@@ -31,6 +31,7 @@ import type { TimelineDragData } from "@/timeline/drag";
 import type { MediaAsset } from "@/media/types";
 import type { ProcessedMediaAsset } from "@/media/processing";
 import { roundFrameTime, type MediaTime } from "@/wasm";
+import { roundMediaTime } from "@/wasm/media-time-rounding";
 
 // --- Config ---
 
@@ -384,14 +385,28 @@ export class DragDropController {
 		target: DropTarget;
 		dragData: Extract<TimelineDragData, { type: "text" }>;
 	}): void {
+		const scene = this.config.getSceneTracks();
+		const cenatTrack = dragData.cenatTextKind && scene.overlay.find((track) =>
+			track.type === "text" && track.cenatTextKind === dragData.cenatTextKind);
+		const sequenceEnd = Math.max(0, ...scene.main.elements.map((clip) => clip.startTime + clip.duration));
+		const available = sequenceEnd - target.xPosition;
+		if (cenatTrack && available <= 0) return;
 		const element = buildTextElement({
 			raw: {
 				name: dragData.name ?? "",
-				params: { content: dragData.content ?? "" },
+				...(cenatTrack ? { duration: roundMediaTime({ time: Math.min(available, 3 * 120_000) }) } : {}),
+				params: { content: dragData.content ?? "",
+					...(dragData.fontSize ? { fontFamily: "Arial", fontSize: dragData.fontSize } : {}) },
 			},
 			startTime: target.xPosition,
 		});
-		this.insertAtTarget({ element, target, trackType: "text" });
+		if (cenatTrack) {
+			this.config.insertElement({ element: { ...element, cenatTextKind: dragData.cenatTextKind },
+				placement: { mode: "explicit", trackId: cenatTrack.id } });
+			return;
+		}
+		this.insertAtTarget({ element: dragData.cenatTextKind ? { ...element, cenatTextKind: dragData.cenatTextKind } : element,
+			target, trackType: "text" });
 	}
 
 	private executeStickerDrop({

@@ -15,6 +15,8 @@ export interface MediaDragData extends BaseDragData {
 export interface TextDragData extends BaseDragData {
 	type: "text";
 	content: string;
+	cenatTextKind?: "text" | "subtitle";
+	fontSize?: number;
 }
 
 export interface StickerDragData extends BaseDragData {

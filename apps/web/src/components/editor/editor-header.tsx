@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 import { FaDiscord } from "react-icons/fa6";
 import { ExportButton } from "./export-button";
 import { CenatExportButton } from "./cenat-export-button";
+import { CenatPreviewButton } from "./cenat-preview-button";
 import { FeedbackPopover } from "@/feedback/components/feedback-popover";
 import { ThemeToggle } from "../theme-toggle";
 import { DEFAULT_LOGO_URL } from "@/site/brand";
@@ -38,7 +39,7 @@ export function EditorHeader() {
 			</div>
 			<nav className="flex items-center gap-2">
 				<FeedbackPopover />
-				{getCenatPrimarySession() ? <CenatExportButton /> : <ExportButton />}
+						{getCenatPrimarySession() ? <><CenatPreviewButton /><CenatExportButton /></> : <ExportButton />}
 				<ThemeToggle />
 			</nav>
 		</header>
