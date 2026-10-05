@@ -177,6 +177,7 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 		setBusy(true);
 		setError("");
 		setProgress(0);
+		let savedBeforePreview = false;
 		try {
 			if (section === "transitions") {
 				const response = catalog ? null : await fetch(`${CENAT_API_ORIGIN}/api/editor/catalog`);
@@ -224,21 +225,33 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 				return;
 			}
 			const projectId = editor.project.getActive().metadata.id;
+			const expectedSeconds = (Number(draft.out) - Number(draft.in)) / Number(draft.speed ?? 1);
+			if (!Number.isFinite(expectedSeconds) || Math.abs(expectedSeconds - element.duration / 120_000) > 1 / edit.fps)
+				throw new Error("Keep the original duration when changing these edits.");
+			const primary = getCenatPrimarySession();
+			if (primary) {
+				editor.timeline.updateElements({ updates: [{ trackId, elementId: element.id,
+					patch: { cenatEdit: { ...edit, clip: structuredClone(draft) } } }] });
+				await editor.save.flush();
+				if (editor.save.getIsDirty()) throw new Error("The edit has not finished saving. Retry before leaving.");
+				savedBeforePreview = true;
+			}
 			const rendered = await renderCenatClip({
 				clip: { ...draft, overlays: undefined },
 				fps: edit.fps,
 				aspect: edit.aspect,
 				onProgress: setProgress,
 			});
-			const expectedSeconds = (Number(draft.out) - Number(draft.in)) / Number(draft.speed ?? 1);
 			if (!Number.isFinite(expectedSeconds) || Math.abs(rendered.duration - expectedSeconds) > 1 / edit.fps)
 				throw new Error("The replacement clip has a different duration. Keep the original trim when changing these edits.");
+			const current = editor.scenes.getActiveSceneOrNull()?.tracks.main.elements.find((item) => item.id === element.id);
+			if (primary && (!current?.cenatEdit || JSON.stringify(current.cenatEdit.clip) !== JSON.stringify(draft) || current.duration !== element.duration)) return;
 			const still = element.type === "image" ? await renderCenatStill({ videoBlob: rendered.blob }) : null;
 			const file = still
 				? new File([still], `cenat-edit-${element.id}-${crypto.randomUUID()}.png`, { type: "image/png" })
 				: new File([rendered.blob], `cenat-edit-${element.id}-${crypto.randomUUID()}.mp4`, { type: "video/mp4" });
 			let asset: MediaAsset | null;
-			if (getCenatPrimarySession()) {
+			if (primary) {
 				asset = {
 					id: crypto.randomUUID(), name: file.name, type: still ? "image" : "video", file,
 					url: URL.createObjectURL(file), duration: rendered.duration,
@@ -270,7 +283,8 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 				},
 			}] });
 		} catch (failure) {
-			setError(failure instanceof Error ? failure.message : "The edit could not be rendered.");
+			const detail = failure instanceof Error ? failure.message : "The edit could not be rendered.";
+			setError(savedBeforePreview ? `Edit saved. Preview could not update: ${detail}` : detail);
 		} finally {
 			setBusy(false);
 		}
