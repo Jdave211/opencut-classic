@@ -11,15 +11,18 @@ const STORAGE_KEY = "mobile-acknowledged";
 
 interface MobileGateProps {
 	children: React.ReactNode;
+	isEmbeddedEditor?: boolean;
 }
 
-export function MobileGate({ children }: MobileGateProps) {
+export function MobileGate({ children, isEmbeddedEditor = false }: MobileGateProps) {
 	const router = useRouter();
 	const [show, setShow] = useState<boolean | null>(null);
 
 	useEffect(() => {
 		const isMobile = window.innerWidth < 1024;
 		const acknowledged = localStorage.getItem(STORAGE_KEY) === "true";
+		// This browser-only check must wait until hydration.
+		// eslint-disable-next-line react-hooks/set-state-in-effect
 		setShow(isMobile && !acknowledged);
 	}, []);
 
@@ -52,19 +55,19 @@ export function MobileGate({ children }: MobileGateProps) {
 						Desktop only (for now)
 					</h1>
 					<p className="text-muted-foreground text-sm leading-relaxed">
-						OpenCut isn't optimized for mobile or iPad yet. Things will break
+						{isEmbeddedEditor ? "Cenat editor" : "OpenCut"} is not optimized for mobile or iPad yet. Things will break
 						and the layout will be a mess. Come back on a desktop for the real
 						experience.
 					</p>
 				</div>
 				<div className="flex items-center gap-3">
 					<Button onClick={handleContinue}>Take a look anyway</Button>
-					<Button variant="ghost" asChild>
+					{!isEmbeddedEditor && <Button variant="ghost" asChild>
 						<Link href="/roadmap" className="flex items-center gap-1">
 							Roadmap
 							<HugeiconsIcon icon={ArrowRight01Icon} size={14} />
 						</Link>
-					</Button>
+					</Button>}
 				</div>
 			</div>
 		</div>

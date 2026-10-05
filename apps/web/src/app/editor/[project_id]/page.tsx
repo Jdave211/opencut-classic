@@ -43,10 +43,10 @@ export default function Editor() {
 	const isEmbeddedEditor = searchParams.get("cenat") === "1";
 
 	return (
-		<MobileGate>
+		<MobileGate isEmbeddedEditor={isEmbeddedEditor}>
 			<EditorProvider projectId={projectId}>
 				<div className="bg-background flex h-screen w-screen flex-col overflow-hidden">
-					<DegradedRendererBanner />
+					<DegradedRendererBanner isEmbeddedEditor={isEmbeddedEditor} />
 					<EditorHeader />
 					<div className="min-h-0 min-w-0 flex-1">
 						<EditorLayout />
@@ -60,14 +60,14 @@ export default function Editor() {
 	);
 }
 
-function DegradedRendererBanner() {
+function DegradedRendererBanner({ isEmbeddedEditor }: { isEmbeddedEditor: boolean }) {
 	const isDegraded = useEditor((e) => e.renderer.isDegraded);
 	const [dismissed, setDismissed] = useState(false);
 	if (!isDegraded || dismissed) return null;
 
 	return (
 		<div className="bg-accent border-b h-9 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-			<span>For the best experience, open {getCenatPrimarySession() ? "Cenat" : "OpenCut"} in Chrome.</span>
+			<span>For the best experience, open {isEmbeddedEditor ? "Cenat" : "OpenCut"} in Chrome.</span>
 			<Button
 				variant="text"
 				size="icon"
