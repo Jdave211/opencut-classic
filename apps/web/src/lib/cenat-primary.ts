@@ -7,7 +7,7 @@ import { roundMediaTime } from "@/wasm/media-time-rounding";
 import type { MediaTime } from "@/wasm";
 import { CURRENT_PROJECT_VERSION } from "@/services/storage/migrations";
 import type { EditorCore } from "@/core";
-import { CENAT_API_ORIGIN, copyLocalVideo, renderCenatClip, renderCenatStill } from "@/lib/cenat-proxy";
+import { CENAT_API_ORIGIN, renderCenatClip, renderCenatStill } from "@/lib/cenat-proxy";
 import { FONT_SIZE_SCALE_REFERENCE } from "@/text/typography";
 
 const CHANNEL = "cenat-primary-editor";
@@ -43,7 +43,25 @@ type CenatAsset = {
 	duration: number; width: number; height: number; hasAudio: boolean; kind?: string;
 	projectId?: string;
 };
-type Reply = { channel: string; projectId: string; requestId: string; type: string; project?: CenatProject; editorProject?: unknown; assets?: CenatAsset[]; revision?: string; error?: string };
+
+function mediaAssetForSource({ source, fps }: { source: CenatAsset; fps: number }): MediaAsset {
+	const type = source.kind === "image" ? "image" : source.kind === "audio" ? "audio" : "video";
+	const sourceUrl = cenatUrl(source.url);
+	// Imported and reopened media use the same durable URL. The media decoder
+	// fetches only what playback needs; no second full-file browser copy.
+	const file = new File([], source.name || source.id, {
+		type: type === "image" ? "image/png" : type === "audio" ? "audio/mpeg" : "video/mp4",
+	});
+	return {
+		id: source.id, name: source.name, file, url: sourceUrl, sourceUrl,
+		type, width: source.width, height: source.height, duration: source.duration,
+		hasAudio: source.hasAudio, fps,
+		thumbnailUrl: source.thumbnail ? cenatUrl(source.thumbnail) : undefined,
+	};
+}
+type CenatLaunch = { message: string; requestId?: string; model?: string; assetIds?: string[] };
+export type CenatVersion = { index: number; label: string; date: string };
+type Reply = { channel: string; projectId: string; requestId: string; type: string; project?: CenatProject; editorProject?: unknown; assets?: CenatAsset[]; revision?: string; error?: string; launch?: CenatLaunch; summary?: string; changed?: boolean; versions?: CenatVersion[]; cursor?: number };
 
 function isCenatClip(value: unknown): value is CenatClip {
 	return !!value && typeof value === "object" &&
@@ -88,12 +106,12 @@ function parentOrigin(): string {
 	return origin.origin;
 }
 
-function request({ projectId, type, data = {} }: { projectId: string; type: string; data?: object }): Promise<Reply> {
+function request({ projectId, type, data = {}, timeoutMs = 20_000 }: { projectId: string; type: string; data?: object; timeoutMs?: number }): Promise<Reply> {
 	const origin = parentOrigin();
 	if (window.parent === window) throw new Error("Open this project from Cenat.");
 	const requestId = crypto.randomUUID();
 	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => { window.removeEventListener("message", receive); reject(new Error("Cenat did not respond.")); }, 20_000);
+		const timer = setTimeout(() => { window.removeEventListener("message", receive); reject(new Error("Cenat did not respond.")); }, timeoutMs);
 		const receive = (event: MessageEvent) => {
 			if (event.origin !== origin || event.source !== window.parent) return;
 			const body: unknown = event.data;
@@ -255,6 +273,9 @@ export class CenatPrimarySession {
 	private maxTextLanes: number;
 	private saveQueue: Promise<void> = Promise.resolve();
 	private savedEditorSignature: string | null = null;
+	private launch: CenatLaunch | null = null;
+	private replacementRunning = false;
+	private reopeningAfterReplacement = false;
 	private previewing = new Set<string>();
 	private previewFailures = new Map<string, { revision: string; retryAt: number }>();
 	private unbindSelection: (() => void) | null = null;
@@ -289,26 +310,15 @@ export class CenatPrimarySession {
 		const fontIds = new Set(catalog.fonts);
 		const maxTextLanes = Number.isInteger(catalog.maxTextLanes) && (catalog.maxTextLanes || 0) > 0 ? catalog.maxTextLanes : 64;
 		const session = new CenatPrimarySession({ id, project: canonicalProject, assets: canonicalAssets, revision: reply.revision, overlapIds, fontIds, maxTextLanes });
+		session.launch = reply.launch || null;
 		const referenced = new Set([
 			...canonicalProject.clips.map((clip) => clip.assetId),
 			...(canonicalProject.tracks || []).flatMap((track) => track.items.map((item) => item.assetId)),
 		]);
 		const sources = canonicalAssets.filter((asset) => referenced.has(asset.id) || asset.projectId === id);
 		const media: MediaAsset[] = [];
-		for (const source of sources) {
-			const sourceUrl = cenatUrl(source.url);
-			const type = source.kind === "image" ? "image" : source.kind === "audio" ? "audio" : "video";
-			// External projects keep their media on the local Cenat server. The
-			// placeholder satisfies local-file-only UI controls; decoders use sourceUrl.
-			const file = new File([], source.name || source.id, { type: type === "image" ? "image/png" : type === "audio" ? "audio/mpeg" : "video/mp4" });
-			media.push({
-				id: source.id, name: source.name, file, url: sourceUrl, sourceUrl,
-				type,
-				width: source.width, height: source.height, duration: source.duration,
-				hasAudio: source.hasAudio, fps: canonicalProject.fps || 30,
-				thumbnailUrl: source.thumbnail ? cenatUrl(source.thumbnail) : undefined,
-			});
-		}
+		for (const source of sources)
+			media.push(mediaAssetForSource({ source, fps: canonicalProject.fps || 30 }));
 		const savedEditor = reviveEditorProject({ value: reply.editorProject, id });
 		if (savedEditor) {
 			session.savedEditorSignature = editorSignature(savedEditor);
@@ -508,6 +518,49 @@ export class CenatPrimarySession {
 	}
 
 	getSourceProject(): CenatProject { return this.original; }
+	isReopeningAfterReplacement(): boolean { return this.reopeningAfterReplacement; }
+	takeLaunch(): CenatLaunch | null {
+		const launch = this.launch;
+		this.launch = null;
+		return launch;
+	}
+
+	async askJev({ project, prompt, selectedId, scope = "all", launch }: { project: TProject; prompt: string; selectedId?: string; scope?: "all" | "selected"; launch?: CenatLaunch }): Promise<{ summary: string; changed: boolean }> {
+		await this.save({ project });
+		this.replacementRunning = true;
+		try {
+			const reply = await request({ projectId: this.id, type: "agent", timeoutMs: 15 * 60_000,
+				data: { revision: this.revision, prompt, selectedId, scope, launch } });
+			if (!reply.revision) throw new Error("Cenat did not confirm the edit.");
+			this.revision = reply.revision;
+			this.reopeningAfterReplacement = reply.changed === true;
+			if (!this.reopeningAfterReplacement) this.replacementRunning = false;
+			return { summary: reply.summary || "Edit complete.", changed: this.reopeningAfterReplacement };
+		} catch (error) {
+			this.replacementRunning = false;
+			throw error;
+		}
+	}
+
+	async getHistory({ project }: { project: TProject }): Promise<{ versions: CenatVersion[]; cursor: number }> {
+		await this.save({ project });
+		const reply = await request({ projectId: this.id, type: "history", data: { revision: this.revision } });
+		if (!reply.versions || reply.cursor === undefined) throw new Error("Cenat did not return the project history.");
+		return { versions: reply.versions, cursor: reply.cursor };
+	}
+
+	async restoreVersion(index: number): Promise<void> {
+		this.replacementRunning = true;
+		try {
+			const reply = await request({ projectId: this.id, type: "restore", data: { revision: this.revision, index } });
+			if (!reply.revision) throw new Error("Cenat did not confirm the restored version.");
+			this.revision = reply.revision;
+			this.reopeningAfterReplacement = true;
+		} catch (error) {
+			this.replacementRunning = false;
+			throw error;
+		}
+	}
 
 	decorateNewMainElement({ element, asset }: { element: CreateTimelineElement; asset: MediaAsset }): CreateTimelineElement {
 		if (element.type !== "video" && element.type !== "image") return element;
@@ -543,17 +596,8 @@ export class CenatPrimarySession {
 		}
 		if (!Array.isArray(job.result)) throw new Error("The imported media is missing.");
 		const media: MediaAsset[] = [];
-		for (const source of job.result) {
-			const blob = await copyLocalVideo({ url: cenatUrl(source.url) });
-			const file = new File([blob], source.name, { type: blob.type });
-			media.push({
-				id: source.id, name: source.name, file, url: URL.createObjectURL(file),
-				type: source.kind === "image" ? "image" : source.kind === "audio" ? "audio" : "video",
-				width: source.width, height: source.height, duration: source.duration,
-				hasAudio: source.hasAudio, fps: this.original.fps || 30,
-				thumbnailUrl: source.thumbnail ? cenatUrl(source.thumbnail) : undefined,
-			});
-		}
+		for (const source of job.result)
+			media.push(mediaAssetForSource({ source, fps: this.original.fps || 30 }));
 		this.assets.push(...job.result.filter((asset) => !this.assets.some((known) => known.id === asset.id)));
 		onProgress?.(100);
 		return media;
@@ -1071,6 +1115,7 @@ export class CenatPrimarySession {
 	}
 
 	async save({ project }: { project: TProject }): Promise<void> {
+		if (this.replacementRunning) return;
 		const canonical = this.toCenatProject({ project });
 		const editorProject = this.editorProjectForSave({ project, canonical });
 		const savedSignature = editorSignature(editorProject);

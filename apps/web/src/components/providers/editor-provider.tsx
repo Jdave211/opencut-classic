@@ -10,7 +10,7 @@ import { useKeybindingsStore } from "@/actions/keybindings-store";
 import { useTimelineStore } from "@/timeline/timeline-store";
 import { useEditorActions } from "@/actions/use-editor-actions";
 import { loadFontAtlas } from "@/fonts/google-fonts";
-import { CenatPrimarySession } from "@/lib/cenat-primary";
+import { CenatPrimarySession, getCenatPrimarySession } from "@/lib/cenat-primary";
 import {
 	initializeGpuRenderer,
 	isGpuAvailable,
@@ -196,6 +196,7 @@ function EditorRuntimeBindings() {
 
 	useEffect(() => {
 		const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+			if (getCenatPrimarySession()?.isReopeningAfterReplacement()) return;
 			if (!editor.save.getIsDirty()) return;
 			event.preventDefault();
 			(event as unknown as { returnValue: string }).returnValue = "";

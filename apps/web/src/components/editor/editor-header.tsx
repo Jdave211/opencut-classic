@@ -29,6 +29,8 @@ import { ShortcutsDialog } from "@/actions/components/shortcuts-dialog";
 import Image from "next/image";
 import { cn } from "@/utils/ui";
 import { getCenatPrimarySession } from "@/lib/cenat-primary";
+import { CenatAgentButton } from "@/components/editor/cenat-agent-button";
+import { CenatHistoryButton } from "@/components/editor/cenat-history-button";
 
 export function EditorHeader() {
 	const isEmbeddedEditor = useSearchParams().get("cenat") === "1";
@@ -40,7 +42,7 @@ export function EditorHeader() {
 			</div>
 			<nav className="flex items-center gap-2">
 				{!isEmbeddedEditor && <FeedbackPopover />}
-				{isEmbeddedEditor ? <><CenatPreviewButton /><CenatExportButton /></> : <ExportButton />}
+				{isEmbeddedEditor ? <><CenatHistoryButton /><CenatAgentButton /><CenatPreviewButton /><CenatExportButton /></> : <ExportButton />}
 				<ThemeToggle />
 			</nav>
 		</header>

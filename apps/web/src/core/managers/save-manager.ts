@@ -9,6 +9,9 @@ export class SaveManager {
 	private debounceMs: number;
 	private isPaused = false;
 	private isSaving = false;
+	private lastSaveFailed = false;
+	private saveSettled: Promise<void> | null = null;
+	private settleSave: (() => void) | null = null;
 	private hasPendingSave = false;
 	private saveTimer: ReturnType<typeof setTimeout> | null = null;
 	private unsubscribeHandlers: Array<() => void> = [];
@@ -83,7 +86,11 @@ export class SaveManager {
 	}
 
 	private async saveNow(): Promise<void> {
-		if (this.isSaving) return;
+		if (this.isSaving) {
+			await this.saveSettled;
+			if (this.hasPendingSave && !this.lastSaveFailed) await this.saveNow();
+			return;
+		}
 		if (!this.hasPendingSave) return;
 
 		const activeProject = this.editor.project.getActive();
@@ -92,6 +99,8 @@ export class SaveManager {
 		if (this.editor.project.getMigrationState().isMigrating) return;
 
 		this.isSaving = true;
+		this.lastSaveFailed = false;
+		this.saveSettled = new Promise<void>((resolve) => { this.settleSave = resolve; });
 		this.hasPendingSave = false;
 		this.clearTimer();
 
@@ -100,12 +109,16 @@ export class SaveManager {
 			await this.editor.project.saveCurrentProject();
 		} catch (error) {
 			failed = true;
+			this.lastSaveFailed = true;
 			this.hasPendingSave = true;
 			toast.error("Project changes were not saved", {
 				description: error instanceof Error ? error.message : "Try again before leaving the editor.",
 			});
 		} finally {
 			this.isSaving = false;
+			this.settleSave?.();
+			this.settleSave = null;
+			this.saveSettled = null;
 			if (this.hasPendingSave && !failed) {
 				this.queueSave();
 			}
