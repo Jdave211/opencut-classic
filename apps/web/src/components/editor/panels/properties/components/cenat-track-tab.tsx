@@ -16,6 +16,13 @@ function fields(value: unknown): Item {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
 	return Object.entries(value).reduce<Item>((result, [key, entry]) => ({ ...result, [key]: entry }), {});
 }
+function maskPoints(value: unknown): { x: number; y: number }[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter((point): point is { x: number; y: number } =>
+		!!point && typeof point === "object" &&
+		"x" in point && typeof point.x === "number" &&
+		"y" in point && typeof point.y === "number");
+}
 
 export function CenatTrackTab({ element, trackId }: { element: TrackElement; trackId: string }) {
 	const editor = useEditor();
@@ -27,6 +34,9 @@ export function CenatTrackTab({ element, trackId }: { element: TrackElement; tra
 		[parent]: { ...fields(current[parent]), [key]: value },
 	}));
 	const nested = (key: string): Item => fields(draft[key]);
+	const points = maskPoints(nested("mask").points);
+	const changePoint = (index: number, key: "x" | "y", value: number) =>
+		setNested("mask", "points", points.map((point, current) => current === index ? { ...point, [key]: value } : point));
 	const numberInput = (label: string, key: string, fallback: number, min: number, max: number, step: number) =>
 		<label className="space-y-1"><span>{label}</span><input className="bg-background w-full rounded border p-2" type="number"
 			min={min} max={max} step={step} value={fieldNumber(draft[key], fallback)}
@@ -41,6 +51,15 @@ export function CenatTrackTab({ element, trackId }: { element: TrackElement; tra
 	const apply = () => {
 		try {
 			if (fieldNumber(draft.out, 0) <= fieldNumber(draft.in, 0)) throw new Error("Source out must follow source in.");
+			if (nested("mask").shape === "polygon") {
+				if (points.length < 3 || points.length > 32 || points.some((point) => point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1))
+					throw new Error("A polygon mask needs 3–32 points inside the layer.");
+				const area = Math.abs(points.reduce((sum, point, index) => {
+					const next = points[(index + 1) % points.length];
+					return sum + point.x * next.y - next.x * point.y;
+				}, 0) / 2);
+				if (area < 0.0001) throw new Error("Polygon mask points must enclose a visible area.");
+			}
 			editor.timeline.updateElements({ updates: [{ trackId, elementId: element.id,
 				patch: { cenatItem: structuredClone(draft) } }] });
 			setError("");
@@ -85,13 +104,29 @@ export function CenatTrackTab({ element, trackId }: { element: TrackElement; tra
 				<div className="space-y-2 pt-2">
 					<label className="block space-y-1"><span>Shape</span><select className="bg-background w-full rounded border p-2"
 						value={String(nested("mask").shape ?? "none")}
-						onChange={(event) => set("mask", event.target.value === "none" ? undefined : { shape: event.target.value, x: 0, y: 0, width: 1, height: 1, feather: 0, invert: false })}>
+						onChange={(event) => set("mask", event.target.value === "none" ? undefined : {
+							shape: event.target.value, x: 0, y: 0, width: 1, height: 1, feather: 0, invert: false,
+							...(event.target.value === "polygon" ? { points: [
+								{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 },
+							] } : {}),
+						})}>
 						{["none", "rect", "ellipse", "linear", "polygon"].map((shape) => <option key={shape} value={shape}>{shape}</option>)}
 					</select></label>
 					{draft.mask !== undefined && <><div className="grid grid-cols-2 gap-2">
 						{["x", "y", "width", "height"].map((key) => <div key={key}>{nestedNumber("mask", key, key, key === "width" || key === "height" ? 1 : 0, 0, 1, 0.01)}</div>)}
 						{nestedNumber("mask", "Feather", "feather", 0, 0, 1, 0.01)}
-					</div>{checkbox("Invert mask", "mask", "invert")}</>}
+						</div>{nested("mask").shape === "polygon" && <div className="space-y-2">
+							<span className="font-medium">Polygon points</span>
+							{points.map((point, index) => <div className="grid grid-cols-[1fr_1fr_auto] gap-2" key={index}>
+								{(["x", "y"] as const).map((key) => <label className="space-y-1" key={key}><span>{key.toUpperCase()} {index + 1}</span>
+									<input className="bg-background w-full rounded border p-2" type="number" min={0} max={1} step={0.01}
+										value={point[key]} onChange={(event) => changePoint(index, key, Number(event.target.value))} /></label>)}
+								<button type="button" className="self-end rounded border px-2 py-2 disabled:opacity-50" disabled={points.length <= 3}
+									onClick={() => setNested("mask", "points", points.filter((_, current) => current !== index))}>Remove</button>
+							</div>)}
+							<button type="button" className="rounded border px-3 py-2 disabled:opacity-50" disabled={points.length >= 32}
+								onClick={() => setNested("mask", "points", [...points, { x: 0.5, y: 0.5 }])}>Add point</button>
+						</div>}{checkbox("Invert mask", "mask", "invert")}</>}
 				</div>
 			</details>
 			{element.type !== "image" && <details><summary className="cursor-pointer font-medium">Background removal</summary>
