@@ -43,7 +43,8 @@ function sourceProject(value) {
 	return value;
 }
 
-export function analyzeCenatProject({ source, assets, mediaRoot, sourceHash }) {
+/** @param {{ source: any, assets: any[], mediaRoot?: string | null, mediaSizes?: Map<string, number> | null, sourceHash: string }} input */
+export function analyzeCenatProject({ source, assets, mediaRoot = null, mediaSizes = null, sourceHash }) {
 	const issues = [];
 	const project = sourceProject(source);
 	const report = {
@@ -267,12 +268,17 @@ export function analyzeCenatProject({ source, assets, mediaRoot, sourceHash }) {
 				!asset.url.endsWith("/.") &&
 				!asset.url.endsWith("/..")
 			) {
-				mediaPath = path.resolve(mediaRoot, asset.url.slice(1));
-				try {
-					const stat = statSync(mediaPath);
-					if (!stat.isFile()) throw new Error("not a file");
-					bytes = stat.size;
-				} catch {
+					mediaPath = mediaRoot ? path.resolve(mediaRoot, asset.url.slice(1)) : asset.url;
+					try {
+						if (mediaSizes) {
+							bytes = mediaSizes.get(asset.id);
+							if (!Number.isSafeInteger(bytes) || bytes <= 0) throw new Error("invalid media size");
+						} else {
+							const stat = statSync(mediaPath);
+							if (!stat.isFile()) throw new Error("not a file");
+							bytes = stat.size;
+						}
+					} catch {
 					issue(
 						issues,
 						"blocker",
