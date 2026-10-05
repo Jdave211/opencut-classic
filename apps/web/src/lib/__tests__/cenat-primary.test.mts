@@ -125,3 +125,26 @@ test("new main photos receive editable clip data before their first save", () =>
 	assert.equal(decorated.cenatEdit?.clip.out, 3);
 	assert.equal(decorated.cenatEdit?.sourceMediaId, "photo-1");
 });
+
+test("inline exact preview renders the working timeline without saving it", async () => {
+	const { session, project } = fixture();
+	const oldFetch = globalThis.fetch;
+	const calls: string[] = [];
+	const mockedSession = session as typeof session & { save: () => Promise<void> };
+	const oldSave = mockedSession.save;
+	mockedSession.save = async () => { throw new Error("Preview must not save the project."); };
+	globalThis.fetch = (async (input: RequestInfo | URL) => {
+		calls.push(String(input));
+		return new Response(JSON.stringify({ id: "preview-1", status: "complete",
+			url: "/previews/preview-1/cenat-export.mp4" }),
+			{ status: 200, headers: { "Content-Type": "application/json" } });
+	}) as typeof fetch;
+	try {
+		const url = await session.preview({ project, persist: false });
+		assert.equal(url, "/cenat/previews/preview-1/cenat-export.mp4");
+		assert.deepEqual(calls, ["/cenat/api/preview"]);
+	} finally {
+		globalThis.fetch = oldFetch;
+		mockedSession.save = oldSave;
+	}
+});

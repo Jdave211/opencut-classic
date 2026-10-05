@@ -1031,11 +1031,12 @@ export class CenatPrimarySession {
 		return cenatUrl(job.url);
 	}
 
-	async preview({ project, onProgress }: {
+	async preview({ project, persist = true, onProgress }: {
 		project: TProject;
+		persist?: boolean;
 		onProgress?: (value: number) => void;
 	}): Promise<string> {
-		await this.save({ project });
+		if (persist) await this.save({ project });
 		const started = await fetch(`${API}/api/preview`, {
 			method: "POST", headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ project: this.toCenatProject({ project }) }),

@@ -19,6 +19,7 @@ import type {
 } from "@/preview/overlays";
 import { PreviewContextMenu } from "./context-menu";
 import { PreviewToolbar } from "./toolbar";
+import { CenatInlinePreview } from "./cenat-inline-preview";
 import {
 	PreviewViewportProvider,
 	usePreviewViewportState,
@@ -322,7 +323,9 @@ function PreviewCanvas({
 											: activeProject?.settings.background.color,
 								}}
 							/>
-								<PreviewOverlayLayer
+							<CenatInlinePreview left={viewport.sceneLeft} top={viewport.sceneTop}
+								width={viewport.sceneWidth} height={viewport.sceneHeight} />
+							<PreviewOverlayLayer
 									instances={overlayInstances}
 									plane="under-interaction"
 								/>

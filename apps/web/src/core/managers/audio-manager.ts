@@ -43,6 +43,7 @@ export class AudioManager {
 	private playbackSessionId = 0;
 	private lastIsPlaying = false;
 	private lastVolume = 1;
+	private externallyRenderedAudio = false;
 	private playbackLatencyCompensationSeconds = 0;
 	private unsubscribers: Array<() => void> = [];
 
@@ -63,6 +64,7 @@ export class AudioManager {
 			unsub();
 		}
 		this.unsubscribers = [];
+		this.externallyRenderedAudio = false;
 		this.disposeSinks();
 		this.preparedClipBuffers.clear();
 		this.decodedBuffers.clear();
@@ -130,13 +132,19 @@ export class AudioManager {
 			destination: this.audioContext.destination,
 		});
 		this.masterGain = input;
-		this.masterGain.gain.value = this.lastVolume;
+		this.masterGain.gain.value = this.externallyRenderedAudio ? 0 : this.lastVolume;
 		return this.audioContext;
+	}
+
+	setExternallyRenderedAudio({ enabled }: { enabled: boolean }): void {
+		if (this.externallyRenderedAudio === enabled) return;
+		this.externallyRenderedAudio = enabled;
+		this.updateGain();
 	}
 
 	private updateGain(): void {
 		if (!this.masterGain) return;
-		this.masterGain.gain.value = this.lastVolume;
+		this.masterGain.gain.value = this.externallyRenderedAudio ? 0 : this.lastVolume;
 	}
 
 	private getPlaybackTime(): number {
@@ -225,7 +233,7 @@ export class AudioManager {
 		for (const source of this.queuedSources) {
 			try {
 				source.stop();
-			} catch {}
+			} catch { /* The source may already have stopped. */ }
 			source.disconnect();
 		}
 		this.queuedSources.clear();
@@ -470,8 +478,7 @@ export class AudioManager {
 	}
 
 	private hasCurveRetime({ clip }: { clip: AudioClipSource }): boolean {
-		const mode = (clip.retime as { mode?: unknown } | undefined)?.mode;
-		return mode === "curve";
+		return clip.retime != null && "mode" in clip.retime && clip.retime.mode === "curve";
 	}
 
 	private scheduleClipGainAutomation({

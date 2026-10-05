@@ -21,9 +21,7 @@ export function CenatPreviewButton() {
 		setUrl("");
 		setError("");
 		try {
-			await editor.save.flush();
-			if (editor.save.getIsDirty()) throw new Error("Save this project before rendering the preview.");
-			const result = await session.preview({ project: editor.project.getActive(), onProgress: setProgress });
+			const result = await session.preview({ project: editor.project.getActive(), persist: false, onProgress: setProgress });
 			setUrl(result);
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : "The preview could not be rendered.");
@@ -31,12 +29,12 @@ export function CenatPreviewButton() {
 	};
 	return <Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild><button type="button" className="rounded-md border px-3 py-1.5 text-sm font-medium" onClick={() => void render()}>
-				Exact preview
+				Full preview
 			</button></DialogTrigger>
 			<DialogContent className="max-w-5xl overflow-hidden">
 				<DialogHeader>
-					<DialogTitle>Exact preview</DialogTitle>
-					<DialogDescription>This render includes Cenat transitions, text motion, masks, keys, grading, and audio processing.</DialogDescription>
+					<DialogTitle>Full preview</DialogTitle>
+					<DialogDescription>Review the whole edit with transitions, text motion, masks, color, and audio.</DialogDescription>
 				</DialogHeader>
 				<div className="px-6 pb-6">
 					{busy && <div role="status" className="bg-muted rounded p-6 text-sm">Rendering preview… {progress}%</div>}

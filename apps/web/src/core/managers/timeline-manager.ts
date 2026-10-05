@@ -870,6 +870,10 @@ export class TimelineManager {
 		);
 	}
 
+	isPreviewingTracks(): boolean {
+		return this.previewTracks !== null;
+	}
+
 	subscribe(listener: () => void): () => void {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
