@@ -15,6 +15,7 @@ import { DeleteProjectDialog } from "@/project/components/delete-project-dialog"
 import { useRouter } from "next/navigation";
 import { FaDiscord } from "react-icons/fa6";
 import { ExportButton } from "./export-button";
+import { CenatExportButton } from "./cenat-export-button";
 import { FeedbackPopover } from "@/feedback/components/feedback-popover";
 import { ThemeToggle } from "../theme-toggle";
 import { DEFAULT_LOGO_URL } from "@/site/brand";
@@ -26,6 +27,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { ShortcutsDialog } from "@/actions/components/shortcuts-dialog";
 import Image from "next/image";
 import { cn } from "@/utils/ui";
+import { getCenatPrimarySession } from "@/lib/cenat-primary";
 
 export function EditorHeader() {
 	return (
@@ -36,7 +38,7 @@ export function EditorHeader() {
 			</div>
 			<nav className="flex items-center gap-2">
 				<FeedbackPopover />
-				<ExportButton />
+				{getCenatPrimarySession() ? <CenatExportButton /> : <ExportButton />}
 				<ThemeToggle />
 			</nav>
 		</header>
@@ -57,10 +59,14 @@ function ProjectDropdown() {
 		setIsExiting(true);
 
 		try {
+			const cenatSession = getCenatPrimarySession();
+			if (cenatSession) {
+				await editor.save.flush();
+				if (editor.save.getIsDirty()) throw new Error("Save this project before leaving.");
+				await cenatSession.exit();
+				return;
+			}
 			await editor.project.prepareExit();
-		} catch (error) {
-			console.error("Failed to prepare project exit:", error);
-		} finally {
 			const returnTo = sessionStorage.getItem("cenat.returnTo");
 			if (returnTo) {
 				sessionStorage.removeItem("cenat.returnTo");
@@ -69,6 +75,9 @@ function ProjectDropdown() {
 				editor.project.closeProject();
 				router.push("/projects");
 			}
+		} catch (error) {
+			toast.error("Could not leave the project", { description: error instanceof Error ? error.message : "Try again." });
+			setIsExiting(false);
 		}
 	};
 

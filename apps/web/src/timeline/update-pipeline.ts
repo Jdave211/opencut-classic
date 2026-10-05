@@ -51,8 +51,8 @@ const deriveRules: ElementUpdateRule[] = [
 				trimStart: originalElement.trimStart,
 				trimEnd: originalElement.trimEnd,
 				duration: originalElement.duration,
-				sourceDuration: isRetimableElement(originalElement)
-					? originalElement.sourceDuration
+				sourceDuration: isRetimableElement(element)
+					? element.sourceDuration
 					: undefined,
 				retime: isRetimableElement(originalElement)
 					? originalElement.retime

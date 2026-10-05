@@ -10,6 +10,7 @@ import { useKeybindingsStore } from "@/actions/keybindings-store";
 import { useTimelineStore } from "@/timeline/timeline-store";
 import { useEditorActions } from "@/actions/use-editor-actions";
 import { loadFontAtlas } from "@/fonts/google-fonts";
+import { CenatPrimarySession } from "@/lib/cenat-primary";
 import {
 	initializeGpuRenderer,
 	isGpuAvailable,
@@ -25,6 +26,7 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 	const router = useRouter();
 	const [isLoading, setIsLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const [progress, setProgress] = useState("Loading project...");
 	const { setLoadingProject } = useKeybindingsStore();
 
 	useEffect(() => {
@@ -40,7 +42,17 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 				setIsLoading(true);
 				await initializeGpuRenderer();
 				editor.renderer.setDegraded(!isGpuAvailable());
-				await editor.project.loadProject({ id: projectId });
+				const isCenatProject = new URLSearchParams(window.location.search).get("cenat") === "1";
+				if (isCenatProject) {
+					const loaded = await CenatPrimarySession.open({ id: projectId, onProgress: setProgress });
+					if (cancelled) { loaded.session.clear(); return; }
+					editor.project.loadExternalProject({
+						project: loaded.project,
+						media: loaded.media,
+						 save: (project) => loaded.session.save({ project }),
+					});
+					loaded.session.bindPreview({ editor });
+				} else await editor.project.loadProject({ id: projectId });
 
 				if (cancelled) return;
 
@@ -54,7 +66,7 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 					(err.message.includes("not found") ||
 						err.message.includes("does not exist"));
 
-				if (isNotFound) {
+				if (isNotFound && new URLSearchParams(window.location.search).get("cenat") !== "1") {
 					try {
 						const newProjectId = await editor.project.createNewProject({
 							name: "Untitled Project",
@@ -102,7 +114,7 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 			<div className="bg-background flex h-screen w-screen items-center justify-center">
 				<div className="flex flex-col items-center gap-4">
 					<Loader2 className="text-muted-foreground size-8 animate-spin" />
-					<p className="text-muted-foreground text-sm">Loading project...</p>
+					<p className="text-muted-foreground text-sm">{progress}</p>
 				</div>
 			</div>
 		);

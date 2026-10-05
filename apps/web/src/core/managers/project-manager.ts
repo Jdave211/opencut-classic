@@ -39,6 +39,7 @@ export interface MigrationState {
 
 export class ProjectManager {
 	private active: TProject | null = null;
+	private externalSave: ((project: TProject) => Promise<void>) | null = null;
 	private savedProjects: TProjectMetadata[] = [];
 	private isLoading = true;
 	private isInitialized = false;
@@ -126,6 +127,7 @@ export class ProjectManager {
 	}
 
 	async loadProject({ id }: { id: string }): Promise<void> {
+		this.externalSave = null;
 		if (!this.isInitialized) {
 			this.isLoading = true;
 			this.notify();
@@ -186,6 +188,24 @@ export class ProjectManager {
 		}
 	}
 
+	loadExternalProject({ project, media, save }: {
+		project: TProject;
+		media: MediaAsset[];
+		save: (project: TProject) => Promise<void>;
+	}): void {
+		this.editor.save.pause();
+		this.editor.media.clearAllAssets();
+		this.editor.scenes.clearScenes();
+		this.externalSave = save;
+		this.active = project;
+		this.editor.scenes.initializeScenes({ scenes: project.scenes, currentSceneId: project.currentSceneId });
+		this.editor.media.setAssets({ assets: media });
+		this.isLoading = false;
+		this.isInitialized = true;
+		this.notify();
+		this.editor.save.resume();
+	}
+
 	async saveCurrentProject(): Promise<void> {
 		if (!this.active) return;
 
@@ -201,10 +221,12 @@ export class ProjectManager {
 				},
 			};
 
-			await storageService.saveProject({ project: updatedProject });
+			if (this.externalSave) await this.externalSave(updatedProject);
+			else await storageService.saveProject({ project: updatedProject });
 			this.active = updatedProject;
 			this.updateMetadata(updatedProject);
 		} catch (error) {
+			if (this.externalSave) throw error;
 			console.error("Failed to save project:", error);
 		}
 	}
@@ -308,6 +330,7 @@ export class ProjectManager {
 	}
 
 	closeProject(): void {
+		this.externalSave = null;
 		this.active = null;
 		this.notify();
 
@@ -322,6 +345,13 @@ export class ProjectManager {
 		id: string;
 		name: string;
 	}): Promise<void> {
+		if (this.externalSave && this.active?.metadata.id === id) {
+			const updatedProject = { ...this.active, metadata: { ...this.active.metadata, name, updatedAt: new Date() } };
+			await this.externalSave(updatedProject);
+			this.active = updatedProject;
+			this.notify();
+			return;
+		}
 		try {
 			const result = await storageService.loadProject({ id });
 			if (!result) {

@@ -244,15 +244,28 @@ function getVideoConfig({
 	mediaAsset: MediaAsset | undefined;
 }): ElementPropertiesConfig {
 	const showAudioTab = mediaAsset?.hasAudio !== false;
+	if (element.cenatEdit) {
+		const section = ({ id, label, icon }: { id: "color" | "effects" | "transitions" | "text" | "audio"; label: string; icon: ReactNode }): PropertiesTabDef => ({
+			id,
+			label,
+			icon,
+			content: ({ trackId }) => <CenatEditsTab key={`${element.id}:${id}:${JSON.stringify(element.cenatEdit?.clip)}`} element={element} trackId={trackId} section={id} />,
+		});
+		return {
+			defaultTab: "color",
+			tabs: [
+				section({ id: "color", label: "Color", icon: <HugeiconsIcon icon={RainDropIcon} size={16} /> }),
+				section({ id: "effects", label: "Effects", icon: <HugeiconsIcon icon={MagicWand05Icon} size={16} /> }),
+				section({ id: "transitions", label: "Transitions", icon: <HugeiconsIcon icon={MagicWand05Icon} size={16} /> }),
+				section({ id: "text", label: "Text", icon: <HugeiconsIcon icon={TextFontIcon} size={16} /> }),
+				...(showAudioTab ? [section({ id: "audio", label: "Audio", icon: <HugeiconsIcon icon={MusicNote03Icon} size={16} /> })] : []),
+				buildSpeedTab({ element }),
+			],
+		};
+	}
 	return {
-		defaultTab: element.cenatEdit ? "cenat" : "transform",
+		defaultTab: "transform",
 		tabs: [
-			...(element.cenatEdit ? [{
-				id: "cenat",
-				label: "Cenat edits",
-				icon: <HugeiconsIcon icon={MagicWand05Icon} size={16} />,
-				content: ({ trackId }: TabContentProps) => <CenatEditsTab key={`${element.id}:${JSON.stringify(element.cenatEdit?.clip)}`} element={element} trackId={trackId} />,
-			}] : []),
 			buildTransformTab({ element }),
 			...(showAudioTab ? [buildAudioTab({ element })] : []),
 			buildSpeedTab({ element }),

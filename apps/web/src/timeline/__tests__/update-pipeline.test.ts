@@ -69,4 +69,24 @@ describe("applyElementUpdate", () => {
 		expect(updatedElement.duration).toBe(7);
 		expect(Number.isInteger(updatedElement.duration)).toBe(true);
 	});
+
+	test("keeps a replacement clip at the replacement source length when clearing retiming", () => {
+		const element = buildVideoElement({
+			duration: mediaTime({ ticks: 400_000 }),
+			sourceDuration: mediaTime({ ticks: 2_400_000 }),
+			retime: { rate: 1.5 },
+		});
+		const tracks = buildTracks(element);
+		const updatedElement = applyElementUpdate({
+			element,
+			patch: {
+				mediaId: "replacement",
+				sourceDuration: mediaTime({ ticks: 400_000 }),
+				retime: undefined,
+			},
+			context: { tracks, trackId: tracks.main.id },
+		});
+
+		expect(updatedElement.duration).toBe(400_000);
+	});
 });

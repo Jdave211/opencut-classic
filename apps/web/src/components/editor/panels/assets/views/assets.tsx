@@ -48,6 +48,7 @@ import {
 import { MASKABLE_ELEMENT_TYPES } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { cn } from "@/utils/ui";
+import { getCenatPrimarySession } from "@/lib/cenat-primary";
 import {
 	CloudUploadIcon,
 	GridViewIcon,
@@ -90,6 +91,12 @@ export function MediaView() {
 			await showMediaUploadToast({
 				filesCount: files.length,
 				promise: async () => {
+					const cenatSession = getCenatPrimarySession();
+					if (cenatSession) {
+						const imported = await cenatSession.importFiles({ files, onProgress: setProgress });
+						editor.media.setAssets({ assets: [...editor.media.getAssets(), ...imported] });
+						return { uploadedCount: imported.length, assetNames: imported.map((asset) => asset.name) };
+					}
 					const processedAssets = await processMediaAssets({
 						files,
 						onProgress: (progress: { progress: number }) =>
@@ -260,6 +267,13 @@ function MediaAssetDraggable({
 		asset: MediaAsset;
 		startTime: MediaTime;
 	}) => {
+		const cenatSession = getCenatPrimarySession();
+		if (cenatSession && asset.type !== "video") {
+			toast.error("This media type is not available on Cenat's main timeline yet.");
+			return;
+		}
+		const mainTrackId = editor.scenes.getActiveSceneOrNull()?.tracks.main.id;
+		const insertTime = cenatSession ? editor.timeline.getTotalDuration() : startTime;
 		const duration =
 			asset.duration != null
 				? mediaTimeFromSeconds({ seconds: asset.duration })
@@ -269,11 +283,11 @@ function MediaAssetDraggable({
 			mediaType: asset.type,
 			name: asset.name,
 			duration,
-			startTime,
+			startTime: insertTime,
 		});
 		editor.timeline.insertElement({
 			element,
-			placement: { mode: "auto" },
+			placement: cenatSession && mainTrackId ? { mode: "explicit", trackId: mainTrackId } : { mode: "auto" },
 		});
 	};
 

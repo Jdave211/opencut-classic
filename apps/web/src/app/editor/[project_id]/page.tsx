@@ -30,14 +30,15 @@ import {
 } from "@/preview/overlays";
 import { usePreviewStore } from "@/preview/preview-store";
 import { getGuidePreviewOverlaySource } from "@/guides";
+import { getCenatPrimarySession } from "@/lib/cenat-primary";
 import {
 	bookmarkNotesPreviewOverlay,
 	getBookmarkPreviewOverlaySource,
 } from "@/timeline/bookmarks/index";
 
 export default function Editor() {
-	const params = useParams();
-	const projectId = params.project_id as string;
+	const params = useParams<{ project_id: string }>();
+	const projectId = params.project_id;
 
 	return (
 		<MobileGate>
@@ -48,9 +49,9 @@ export default function Editor() {
 					<div className="min-h-0 min-w-0 flex-1">
 						<EditorLayout />
 					</div>
-					<Onboarding />
-					<MigrationDialog />
-					<ChangelogNotification />
+					{!getCenatPrimarySession() && <Onboarding />}
+					{!getCenatPrimarySession() && <MigrationDialog />}
+					{!getCenatPrimarySession() && <ChangelogNotification />}
 				</div>
 			</EditorProvider>
 		</MobileGate>

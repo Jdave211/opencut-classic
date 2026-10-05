@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useEditor } from "@/editor/use-editor";
 import { processMediaAssets } from "@/media/processing";
 import { renderCenatClip } from "@/lib/cenat-proxy";
 import type { VideoElement } from "@/timeline/types";
 import { roundMediaTime } from "@/wasm/media-time-rounding";
+import { getCenatPrimarySession } from "@/lib/cenat-primary";
+import type { MediaAsset } from "@/media/types";
 
 type CenatOverlay = Record<string, unknown> & { id: string; kind: string; text?: string };
 type TimedWord = { text: string; start: number; end: number };
@@ -15,6 +17,8 @@ const ANIMATIONS = ["none", "zoom-in", "zoom-out", "pan-left", "pan-right", "fad
 const TEXT_ANIMATIONS = ["none", "fade", "slide-up", "slide-down", "slide-left", "slide-right", "typewriter", "word-pop", "bounce", "pop", "blur-in", "karaoke", "spotlight-word", "zoom-blur", "rise", "word-slide", "glitch", "split-in", "appear", "drop-in", "stamp", "shimmer"];
 const TITLE_TEMPLATES = ["none", "title", "chapter", "editorial", "locator", "kinetic", "arc", "stacked"];
 const TEXT_STYLES = ["none", "shadow", "outline", "sticker", "glow", "gradient", "highlight", "underline", "strike", "circle", "3d-shadow"];
+type CatalogEntry = { id: string; label: string; duration?: { min: number; max: number; default: number }; defaultAmount?: number };
+type Catalog = { transitions: CatalogEntry[]; effects: CatalogEntry[]; textMotion: CatalogEntry[]; textStyles: CatalogEntry[] };
 const GRADE_CONTROLS = [
 	{ key: "brightness", label: "Brightness", defaultValue: 1, step: 0.05 },
 	{ key: "contrast", label: "Contrast", defaultValue: 1, step: 0.05 },
@@ -49,13 +53,30 @@ function wordsOf(overlay: CenatOverlay): TimedWord[] {
 		"end" in value && typeof value.end === "number");
 }
 
-export function CenatEditsTab({ element, trackId }: { element: VideoElement; trackId: string }) {
+function transitionOf(value: unknown): { type: string; duration: number } | null {
+	if (!value || typeof value !== "object" ||
+		!("type" in value) || typeof value.type !== "string") return null;
+	const duration = "duration" in value && typeof value.duration === "number" ? value.duration : 0.5;
+	return { type: value.type, duration };
+}
+
+export function CenatEditsTab({ element, trackId, section }: { element: VideoElement; trackId: string; section: "color" | "effects" | "text" | "audio" | "transitions" }) {
 	const editor = useEditor();
 	const edit = element.cenatEdit;
 	const [draft, setDraft] = useState<Record<string, unknown>>(() => structuredClone(edit?.clip ?? {}));
 	const [busy, setBusy] = useState(false);
 	const [progress, setProgress] = useState(0);
 	const [error, setError] = useState("");
+	const [catalog, setCatalog] = useState<Catalog | null>(null);
+	const transition = transitionOf(draft.transition);
+	useEffect(() => {
+		let active = true;
+		void fetch("http://127.0.0.1:3001/api/editor/catalog")
+			.then((response) => response.ok ? response.json() : null)
+			.then((value: Catalog | null) => { if (active && value) setCatalog(value); })
+			.catch(() => {});
+		return () => { active = false; };
+	}, []);
 	if (!edit) return null;
 
 	const change = ({ key, value }: { key: string; value: unknown }) => setDraft((current) => ({ ...current, [key]: value }));
@@ -89,6 +110,11 @@ export function CenatEditsTab({ element, trackId }: { element: VideoElement; tra
 		setError("");
 		setProgress(0);
 		try {
+			if (section === "transitions") {
+				editor.timeline.updateElements({ updates: [{ trackId, elementId: element.id,
+					patch: { cenatEdit: { ...edit, clip: structuredClone(draft) } } }] });
+				return;
+			}
 			const projectId = editor.project.getActive().metadata.id;
 			const rendered = await renderCenatClip({
 				clip: draft,
@@ -96,16 +122,28 @@ export function CenatEditsTab({ element, trackId }: { element: VideoElement; tra
 				aspect: edit.aspect,
 				onProgress: setProgress,
 			});
-			const expectedSeconds = Number(draft.out) - Number(draft.in);
+			const expectedSeconds = (Number(draft.out) - Number(draft.in)) / Number(draft.speed ?? 1);
 			if (!Number.isFinite(expectedSeconds) || Math.abs(rendered.duration - expectedSeconds) > 1 / edit.fps)
 				throw new Error("The replacement clip has a different duration. Keep the original trim when changing these edits.");
 			const file = new File([rendered.blob], `cenat-edit-${element.id}-${crypto.randomUUID()}.mp4`, { type: "video/mp4" });
-			const [processed] = await processMediaAssets({ files: [file] });
-			if (!processed || !Number.isFinite(processed.duration)) throw new Error("The replacement video could not be read.");
-			const asset = await editor.media.addMediaAsset({ projectId, asset: processed });
+			let asset: MediaAsset | null;
+			if (getCenatPrimarySession()) {
+				asset = {
+					id: crypto.randomUUID(), name: file.name, type: "video", file,
+					url: URL.createObjectURL(file), duration: rendered.duration,
+					width: rendered.width, height: rendered.height,
+					hasAudio: Number(draft.volume ?? 1) !== 0, ephemeral: true,
+					thumbnailUrl: editor.media.getAssets().find((item) => item.id === edit.sourceMediaId)?.thumbnailUrl,
+				};
+				editor.media.setAssets({ assets: [...editor.media.getAssets(), asset] });
+			} else {
+				const [processed] = await processMediaAssets({ files: [file] });
+				if (!processed || !Number.isFinite(processed.duration)) throw new Error("The replacement video could not be read.");
+				asset = await editor.media.addMediaAsset({ projectId, asset: processed });
+			}
 			if (!asset) throw new Error("The replacement video could not be saved.");
-			const sourceDuration = roundMediaTime({ time: Math.round(processed.duration! * 120_000) });
-			if (sourceDuration < element.trimStart + element.duration)
+			const sourceDuration = roundMediaTime({ time: Math.round((asset.duration ?? 0) * 120_000) });
+			if (sourceDuration < element.duration - 120_000 / edit.fps)
 				throw new Error("The replacement video is shorter than the edited timeline clip.");
 			editor.timeline.updateElements({ updates: [{
 				trackId,
@@ -114,7 +152,9 @@ export function CenatEditsTab({ element, trackId }: { element: VideoElement; tra
 					mediaId: asset.id,
 					isSourceAudioEnabled: Number(draft.volume ?? 1) !== 0,
 					sourceDuration,
-					trimEnd: roundMediaTime({ time: sourceDuration - element.trimStart - element.duration }),
+					trimStart: roundMediaTime({ time: 0 }),
+					trimEnd: roundMediaTime({ time: Math.max(0, sourceDuration - element.duration) }),
+					retime: undefined,
 					cenatEdit: { ...edit, clip: structuredClone(draft), proxyMediaId: asset.id },
 				},
 			}] });
@@ -127,9 +167,9 @@ export function CenatEditsTab({ element, trackId }: { element: VideoElement; tra
 
 	return <div className="space-y-5 p-4 text-sm">
 		<div>
-			<h3 className="font-semibold">Cenat edits</h3>
-			<p className="mt-1 text-muted-foreground">Edit the original values and render a new clip. Your source footage stays in this project.</p>
+			<h3 className="font-semibold capitalize">{section === "text" ? "Titles and captions" : section}</h3>
 		</div>
+		{section === "color" && <>
 		<label className="block space-y-1"><span>Filter</span>
 			<select className="bg-background w-full rounded border p-2" value={String(draft.filter ?? "none")} onChange={(event) => change({ key: "filter", value: event.target.value })}>
 				{FILTERS.map((filter) => <option key={filter} value={filter}>{filter}</option>)}
@@ -140,12 +180,30 @@ export function CenatEditsTab({ element, trackId }: { element: VideoElement; tra
 				<input className="bg-background w-full rounded border p-2" type="number" step={field.step} value={Number(draft[field.key] ?? field.defaultValue)} onChange={(event) => change({ key: field.key, value: Number(event.target.value) })} />
 			</label>)}</div>
 		</details>
+		</>}
+		{section === "effects" && <>
 		<div className="grid grid-cols-2 gap-2">
-			<label className="space-y-1"><span>Effect</span><select className="bg-background w-full rounded border p-2" value={String(draft.effect ?? "none")} onChange={(event) => change({ key: "effect", value: event.target.value })}>{EFFECTS.map((effect) => <option key={effect} value={effect}>{effect}</option>)}</select></label>
+			<label className="space-y-1"><span>Effect</span><select className="bg-background w-full rounded border p-2" value={String(draft.effect ?? "none")} onChange={(event) => change({ key: "effect", value: event.target.value })}>{(catalog?.effects || EFFECTS.map((id) => ({ id, label: id }))).map((effect) => <option key={effect.id} value={effect.id}>{effect.label}</option>)}</select></label>
 			<label className="space-y-1"><span>Amount override</span><input className="bg-background w-full rounded border p-2" type="number" min="0" max="1" step="0.05" placeholder="Default" value={draft.effectAmount == null ? "" : Number(draft.effectAmount)} onChange={(event) => change({ key: "effectAmount", value: event.target.value === "" ? undefined : Number(event.target.value) })} /></label>
 			<label className="space-y-1"><span>Motion</span><select className="bg-background w-full rounded border p-2" value={String(draft.animation ?? "none")} onChange={(event) => change({ key: "animation", value: event.target.value })}>{ANIMATIONS.map((animation) => <option key={animation} value={animation}>{animation}</option>)}</select></label>
-			<label className="space-y-1"><span>Source volume</span><input className="bg-background w-full rounded border p-2" type="number" min="0" max="2" step="0.05" value={Number(draft.volume ?? 1)} onChange={(event) => change({ key: "volume", value: Number(event.target.value) })} /></label>
 		</div>
+		</>}
+		{section === "transitions" && <>
+			<label className="block space-y-1"><span>Incoming transition</span>
+				<select className="bg-background w-full rounded border p-2" value={transition?.type ?? "none"}
+					onChange={(event) => {
+						const entry = catalog?.transitions.find((item) => item.id === event.target.value);
+						change({ key: "transition", value: event.target.value === "none" ? undefined : { type: event.target.value, duration: entry?.duration?.default ?? 0.5 } });
+					}}>
+					{(catalog?.transitions || [{ id: "none", label: "Hard cut" }, { id: "cross-dissolve", label: "Cross dissolve" }]).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+				</select>
+			</label>
+			{transition && <label className="block space-y-1"><span>Duration (seconds)</span><input className="bg-background w-full rounded border p-2" type="number" min="0.1" max="3" step="0.05"
+				value={transition.duration}
+				onChange={(event) => change({ key: "transition", value: { type: transition.type, duration: Number(event.target.value) } })} /></label>}
+		</>}
+		{section === "audio" && <label className="block space-y-1"><span>Source volume</span><input className="bg-background w-full rounded border p-2" type="number" min="0" max="2" step="0.05" value={Number(draft.volume ?? 1)} onChange={(event) => change({ key: "volume", value: Number(event.target.value) })} /></label>}
+		{section === "text" && <>
 		<div className="space-y-3">
 			<div className="flex items-center justify-between"><h4 className="font-medium">Titles and captions</h4><button className="rounded border px-2 py-1" onClick={addTitle}>Add title</button></div>
 			{overlaysOf(draft).map((overlay, index) => <div className="space-y-2 rounded border p-3" key={overlay.id}>
@@ -159,8 +217,8 @@ export function CenatEditsTab({ element, trackId }: { element: VideoElement; tra
 				<label className="block space-y-1"><span>Font</span><input className="bg-background w-full rounded border p-2" value={String(overlay.font ?? "Arial")} onChange={(event) => changeOverlay({ index, key: "font", value: event.target.value })} /></label>
 				<label className="block space-y-1"><span>Color</span><input className="bg-background h-10 w-full rounded border p-1" type="color" value={String(overlay.color ?? "#ffffff")} onChange={(event) => changeOverlay({ index, key: "color", value: event.target.value })} /></label>
 				<div className="grid grid-cols-2 gap-2">
-					<label className="space-y-1"><span>Animation</span><select className="bg-background w-full rounded border p-2" value={String(overlay.animation ?? "none")} onChange={(event) => changeOverlay({ index, key: "animation", value: event.target.value })}>{TEXT_ANIMATIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-					<label className="space-y-1"><span>Text style</span><select className="bg-background w-full rounded border p-2" value={String(overlay.textStyle ?? "none")} onChange={(event) => changeOverlay({ index, key: "textStyle", value: event.target.value })}>{TEXT_STYLES.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+					<label className="space-y-1"><span>Animation</span><select className="bg-background w-full rounded border p-2" value={String(overlay.animation ?? "none")} onChange={(event) => changeOverlay({ index, key: "animation", value: event.target.value })}>{(catalog?.textMotion || TEXT_ANIMATIONS.map((id) => ({ id, label: id }))).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+					<label className="space-y-1"><span>Text style</span><select className="bg-background w-full rounded border p-2" value={String(overlay.textStyle ?? "none")} onChange={(event) => changeOverlay({ index, key: "textStyle", value: event.target.value })}>{(catalog?.textStyles || TEXT_STYLES.map((id) => ({ id, label: id }))).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
 					<label className="space-y-1"><span>Title design</span><select className="bg-background w-full rounded border p-2" value={String(overlay.remotionTemplate ?? "none")} onChange={(event) => changeOverlay({ index, key: "remotionTemplate", value: event.target.value === "none" ? undefined : event.target.value })}>{TITLE_TEMPLATES.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
 					<label className="space-y-1"><span>Title motion</span><select className="bg-background w-full rounded border p-2" value={String(overlay.titleMotion ?? "standard")} onChange={(event) => changeOverlay({ index, key: "titleMotion", value: event.target.value })}>{["restrained", "standard", "punchy"].map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
 					<label className="space-y-1"><span>Weight</span><input className="bg-background w-full rounded border p-2" type="number" step="100" value={Number(overlay.weight ?? 700)} onChange={(event) => changeOverlay({ index, key: "weight", value: Number(event.target.value) })} /></label>
@@ -174,7 +232,8 @@ export function CenatEditsTab({ element, trackId }: { element: VideoElement; tra
 				</div>
 			</div>)}
 		</div>
+		</>}
 		{error && <p className="text-destructive" role="alert">{error}</p>}
-		<button className="bg-primary text-primary-foreground w-full rounded px-4 py-2 disabled:opacity-50" disabled={busy || JSON.stringify(draft) === JSON.stringify(edit.clip)} onClick={() => void save()}>{busy ? `Rendering… ${progress}%` : "Apply Cenat edits"}</button>
+		<button className="bg-primary text-primary-foreground w-full rounded px-4 py-2 disabled:opacity-50" disabled={busy || JSON.stringify(draft) === JSON.stringify(edit.clip)} onClick={() => void save()}>{busy ? `Updating preview… ${progress}%` : "Apply changes"}</button>
 	</div>;
 }

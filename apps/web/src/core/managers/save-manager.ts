@@ -1,4 +1,5 @@
 import type { EditorCore } from "@/core";
+import { toast } from "sonner";
 
 type SaveManagerOptions = {
 	debounceMs?: number;
@@ -94,11 +95,18 @@ export class SaveManager {
 		this.hasPendingSave = false;
 		this.clearTimer();
 
+		let failed = false;
 		try {
 			await this.editor.project.saveCurrentProject();
+		} catch (error) {
+			failed = true;
+			this.hasPendingSave = true;
+			toast.error("Project changes were not saved", {
+				description: error instanceof Error ? error.message : "Try again before leaving the editor.",
+			});
 		} finally {
 			this.isSaving = false;
-			if (this.hasPendingSave) {
+			if (this.hasPendingSave && !failed) {
 				this.queueSave();
 			}
 		}
