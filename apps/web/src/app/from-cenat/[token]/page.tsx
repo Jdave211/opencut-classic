@@ -6,6 +6,7 @@ import { useEditor } from "@/editor/use-editor";
 import type { EditorCore } from "@/core";
 import { processMediaAssets } from "@/media/processing";
 import { buildProject, isReadyReport, mediaMapping, type Report } from "@/lib/cenat-import";
+import { CENAT_API_ORIGIN, copyLocalVideo, renderCenatClip } from "@/lib/cenat-proxy";
 import { storageService } from "@/services/storage/service";
 
 type Handoff = {
@@ -19,34 +20,8 @@ type Preflight = Partial<Omit<Report, "status">> & { status?: string; issues?: F
 type RenderableReport = Preflight & { sourceHash: string; projectName: string };
 
 const CENAT_ORIGIN = "http://localhost:5173";
-const CENAT_API_ORIGIN = "http://127.0.0.1:3001";
 const MAP_KEY = "cenat.importedProjects.v1";
 const RENDERABLE_BLOCKERS = new Set(["filter-unmapped", "overlay-unmapped", "grade-unmapped"]);
-const MEDIA_CHUNK_BYTES = 8 * 1024 * 1024;
-
-async function copyLocalVideo({ url, knownBytes }: { url: string; knownBytes?: number }): Promise<Blob> {
-	let bytes = knownBytes;
-	if (!bytes) {
-		const head = await fetch(url, { method: "HEAD" });
-		if (!head.ok) throw new Error("The rendered video is unavailable.");
-		bytes = Number(head.headers.get("Content-Length"));
-	}
-	if (!Number.isSafeInteger(bytes) || bytes <= 0)
-		throw new Error("The video size could not be verified.");
-	const parts: Blob[] = [];
-	for (let start = 0; start < bytes; start += MEDIA_CHUNK_BYTES) {
-		const end = Math.min(bytes - 1, start + MEDIA_CHUNK_BYTES - 1);
-		const response = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } });
-		if (response.status !== 206 || response.headers.get("Content-Range") !== `bytes ${start}-${end}/${bytes}`)
-			throw new Error("The video server did not return the requested part.");
-		const part = await response.blob();
-		if (part.size !== end - start + 1)
-			throw new Error("A video part was incomplete.");
-		parts.push(part);
-	}
-	return new Blob(parts, { type: "video/mp4" });
-}
-
 function canOpenRenderedCopy(report: Preflight): report is RenderableReport {
 	return report.format === "cenat-to-opencut-compatibility-v1" &&
 		typeof report.sourceHash === "string" &&
@@ -149,10 +124,13 @@ export default function FromCenatPage() {
 				status: "ready",
 				projectName: `${checked.projectName} (rendered copy)`,
 				fps,
+				aspect: checked.aspect ?? "source",
 				canvas: { width: job.width!, height: job.height! },
 				media: [{ id: "baked", bytes: blob.size, durationSeconds: job.duration!, width: job.width!, height: job.height! }],
 				clips: preserveCuts ? checked.clips!.map((clip) => ({
 					...clip,
+					cenatEdit: null,
+					needsProxy: false,
 					assetId: "baked",
 					inTicks: clip.startTicks,
 					outTicks: clip.startTicks + clip.durationTicks,
@@ -232,7 +210,30 @@ export default function FromCenatPage() {
 					files.push(new File([blob], `${media.id}.mp4`, { type: "video/mp4" }));
 				}
 					setProgress("Building and checking the new timeline…");
-					const destination = await saveTimeline({ editor, report: checked, files, key });
+					const editable: Report = {
+						...checked,
+						media: [...checked.media],
+						clips: checked.clips.map((clip) => ({ ...clip })),
+					};
+					for (const [index, clip] of editable.clips.entries()) {
+						if (!clip.needsProxy || !clip.cenatEdit) continue;
+						setProgress(`Preparing editable Cenat edits ${index + 1} of ${editable.clips.length}…`);
+						const rendered = await renderCenatClip({
+							clip: clip.cenatEdit.clip,
+							fps: editable.fps,
+							aspect: editable.aspect,
+							onProgress: (value) => setProgress(`Rendering edit ${index + 1} of ${editable.clips.length}… ${value}%`),
+						});
+						if (Math.abs(rendered.duration * 120_000 - clip.durationTicks) > 120_000 / editable.fps)
+							throw new Error(`Rendered clip ${clip.name} has a different duration from the source edit.`);
+						const proxyId = `proxy-${clip.sourceId}`;
+						editable.media.push({ id: proxyId, bytes: rendered.blob.size, durationSeconds: rendered.duration, width: rendered.width, height: rendered.height });
+						files.push(new File([rendered.blob], `${proxyId}.mp4`, { type: "video/mp4" }));
+						clip.assetId = proxyId;
+						clip.inTicks = 0;
+						clip.outTicks = clip.durationTicks;
+					}
+					const destination = await saveTimeline({ editor, report: editable, files, key });
 					router.replace(`/editor/${destination}`);
 				} catch (failure) {
 				setError(failure instanceof Error ? failure.message : "Could not open the project.");

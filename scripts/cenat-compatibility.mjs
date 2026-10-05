@@ -5,6 +5,10 @@ import { pathToFileURL } from "node:url";
 
 const TICKS_PER_SECOND = 120_000;
 const SUPPORTED_FPS = new Set([24, 25, 30, 60, 120]);
+const CENAT_FILTERS = new Set(["none", "cinematic", "warm", "cool", "noir", "vintage", "vivid"]);
+const CENAT_EFFECTS = new Set(["none", "vignette", "blur", "rgb-split", "glitch", "film-grain", "vhs", "shake", "zoom-pulse", "zoom-punch", "flash", "echo", "glow", "pixelate", "mirror", "sharpen", "letterbox", "invert"]);
+const CENAT_ANIMATIONS = new Set(["none", "zoom-in", "zoom-out", "pan-left", "pan-right", "fade-in"]);
+const GRADE_DEFAULTS = { brightness: 1, contrast: 1, saturation: 1, temperature: 0, shadows: 0, highlights: 0, tint: 0, hue: 0, clarity: 0, vignette: 0, glow: 0, lensBlur: 0 };
 const PROJECT_FIELDS = new Set([
 	"id",
 	"name",
@@ -21,6 +25,20 @@ const CLIP_FIELDS = new Set([
 	"speed",
 	"volume",
 	"brightness",
+	"contrast",
+	"saturation",
+	"temperature",
+	"shadows",
+	"highlights",
+	"tint",
+	"hue",
+	"clarity",
+	"vignette",
+	"glow",
+	"lensBlur",
+	"effect",
+	"effectAmount",
+	"animation",
 	"overlays",
 	"transition",
 	"filter",
@@ -53,6 +71,7 @@ export function analyzeCenatProject({ source, assets, mediaRoot = null, mediaSiz
 		projectName: typeof project?.name === "string" ? project.name : null,
 		status: "blocked",
 		fps: null,
+		aspect: project?.aspect ?? null,
 		canvas: null,
 		clipCount: Array.isArray(project?.clips) ? project.clips.length : 0,
 		media: [],
@@ -163,40 +182,47 @@ export function analyzeCenatProject({ source, assets, mediaRoot = null, mediaSiz
 				`${location}.speed`,
 				"Retime needs preview and export parity.",
 			);
-		if (clip.brightness !== undefined && clip.brightness !== 1)
+		for (const field of Object.keys(GRADE_DEFAULTS)) {
+			if (clip[field] !== undefined && (!Number.isFinite(clip[field]) ||
+				(field === "brightness" && (clip[field] < 0 || clip[field] > 3))))
+				issue(issues, "blocker", "invalid-grade", `${location}.${field}`, "Grade value is outside Cenat's supported range.");
+		}
+		if (clip.volume !== undefined && (!Number.isFinite(clip.volume) || clip.volume < 0 || clip.volume > 2))
 			issue(
 				issues,
 				"blocker",
-				"grade-unmapped",
-				`${location}.brightness`,
-				"Color grade needs preview and export parity.",
-			);
-		if (clip.volume !== undefined && clip.volume !== 1 && clip.volume !== 0)
-			issue(
-				issues,
-				"blocker",
-				"volume-unmapped",
+				"invalid-volume",
 				`${location}.volume`,
-				"Intermediate gain needs preview and export parity.",
+				"Volume must be a finite value between 0 and 2.",
 			);
-		if (clip.filter !== undefined && clip.filter !== "none")
+		if (clip.effect !== undefined && !CENAT_EFFECTS.has(clip.effect))
+			issue(issues, "blocker", "invalid-effect", `${location}.effect`, "The effect is not in Cenat's catalog.");
+		if (clip.animation !== undefined && !CENAT_ANIMATIONS.has(clip.animation))
+			issue(issues, "blocker", "invalid-animation", `${location}.animation`, "The animation is not in Cenat's catalog.");
+		if (clip.effectAmount !== undefined && (!Number.isFinite(clip.effectAmount) || clip.effectAmount < 0 || clip.effectAmount > 1))
+			issue(issues, "blocker", "invalid-effect-amount", `${location}.effectAmount`, "Effect amount must be between 0 and 1.");
+		if (clip.filter !== undefined && !CENAT_FILTERS.has(clip.filter))
 			issue(
 				issues,
 				"blocker",
-				"filter-unmapped",
+				"invalid-filter",
 				`${location}.filter`,
-				"Filter needs preview and export parity.",
+				"The filter is not a known Cenat preset.",
 			);
 		if (
 			clip.overlays !== undefined &&
-			(!Array.isArray(clip.overlays) || clip.overlays.length > 0)
+			(!Array.isArray(clip.overlays) || clip.overlays.some((overlay) =>
+				!overlay || typeof overlay !== "object" || typeof overlay.id !== "string" ||
+				!["text", "subtitle"].includes(overlay.kind) ||
+				!Number.isFinite(overlay.start) || !Number.isFinite(overlay.end) ||
+				overlay.start >= overlay.end))
 		)
 			issue(
 				issues,
 				"blocker",
-				"overlay-unmapped",
+				"invalid-overlay",
 				`${location}.overlays`,
-				"Titles and overlays need their own mapping.",
+				"Overlay timing and IDs must be valid.",
 			);
 		if (clip.transition !== undefined && clip.transition?.type !== "none")
 			issue(
@@ -362,6 +388,15 @@ export function analyzeCenatProject({ source, assets, mediaRoot = null, mediaSiz
 				outTicks,
 				durationTicks,
 				sourceAudioEnabled: clip.volume !== 0,
+				// Clip-scoped Cenat edits are rendered as replaceable proxies. The
+				// original clip and its source media stay available for further edits.
+				needsProxy: Boolean((clip.filter && clip.filter !== "none") ||
+					Object.entries(GRADE_DEFAULTS).some(([field, fallback]) => clip[field] !== undefined && clip[field] !== fallback) ||
+					(clip.effect && clip.effect !== "none") ||
+					(clip.animation && clip.animation !== "none") ||
+					(clip.volume !== undefined && clip.volume !== 0 && clip.volume !== 1) ||
+					(Array.isArray(clip.overlays) && clip.overlays.length > 0)),
+				cenatEdit: { clip: structuredClone(clip), sourceAssetId: clip.assetId },
 			});
 			startTime += durationTicks;
 		}

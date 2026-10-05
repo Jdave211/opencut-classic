@@ -117,6 +117,14 @@ interface BaseTimelineElement {
 export interface VideoElement extends BaseTimelineElement {
 	type: "video";
 	mediaId: string;
+	/** Original Cenat edit and source media retained when this clip uses a rendered proxy. */
+	cenatEdit?: {
+		clip: Record<string, unknown>;
+		sourceMediaId: string;
+		proxyMediaId: string;
+		fps: number;
+		aspect: string;
+	};
 	isSourceAudioEnabled?: boolean;
 	hidden?: boolean;
 	retime?: RetimeConfig;

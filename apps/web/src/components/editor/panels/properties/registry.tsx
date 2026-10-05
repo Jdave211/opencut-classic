@@ -28,6 +28,7 @@ import { MasksTab } from "@/masks/components/masks-tab";
 import { SpeedTab } from "@/speed/components/speed-tab";
 import { GraphicTab } from "@/graphics/components/graphic-tab";
 import { OcShapesIcon } from "@/components/icons";
+import { CenatEditsTab } from "./components/cenat-edits-tab";
 
 const TRANSFORM_PARAM_KEYS = [
 	"transform.positionX",
@@ -244,8 +245,14 @@ function getVideoConfig({
 }): ElementPropertiesConfig {
 	const showAudioTab = mediaAsset?.hasAudio !== false;
 	return {
-		defaultTab: "transform",
+		defaultTab: element.cenatEdit ? "cenat" : "transform",
 		tabs: [
+			...(element.cenatEdit ? [{
+				id: "cenat",
+				label: "Cenat edits",
+				icon: <HugeiconsIcon icon={MagicWand05Icon} size={16} />,
+				content: ({ trackId }: TabContentProps) => <CenatEditsTab key={`${element.id}:${JSON.stringify(element.cenatEdit?.clip)}`} element={element} trackId={trackId} />,
+			}] : []),
 			buildTransformTab({ element }),
 			...(showAudioTab ? [buildAudioTab({ element })] : []),
 			buildSpeedTab({ element }),

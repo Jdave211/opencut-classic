@@ -24,6 +24,8 @@ export default function CenatMigrationPage() {
 				throw new Error(
 					"This report has blockers or is not a valid ready report.",
 				);
+			if (value.clips.some((clip) => clip.needsProxy))
+				throw new Error("This project has Cenat effects. Open it from Cenat's home page so the edited clips can be rendered before import.");
 			setReport(value);
 		} catch (failure) {
 			setError(failure instanceof Error ? failure.message : "Could not read the report.");

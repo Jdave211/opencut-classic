@@ -86,6 +86,22 @@ test("blocks unsupported transitions and unknown clip fields", () => {
 	);
 });
 
+test("keeps filters, grades, and timed titles editable through a clip proxy", () => {
+	const altered = structuredClone(project);
+	altered.clips[0].filter = "cinematic";
+	altered.clips[0].brightness = 1.2;
+	altered.clips[0].overlays = [{
+		id: "title-1", kind: "text", text: "A title", start: 0, end: 1,
+	}];
+	const report = analyzeCenatProject({
+		source: altered, assets, mediaRoot, sourceHash: "source-hash",
+	});
+	expect(report.status).toBe("ready");
+	expect(report.clips[0].needsProxy).toBe(true);
+	expect(report.clips[1].needsProxy).toBe(false);
+	expect(report.clips[0].cenatEdit.clip).toEqual(altered.clips[0]);
+});
+
 test("blocks absent and unsafe media paths", () => {
 	const missing = analyzeCenatProject({
 		source: project,

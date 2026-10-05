@@ -20,6 +20,8 @@ type ReportClip = {
 	outTicks: number;
 	durationTicks: number;
 	sourceAudioEnabled: boolean;
+	needsProxy?: boolean;
+	cenatEdit?: { clip: Record<string, unknown>; sourceAssetId: string } | null;
 };
 export type Report = {
 	format: "cenat-to-opencut-compatibility-v1";
@@ -27,6 +29,7 @@ export type Report = {
 	projectName: string;
 	status: "ready";
 	fps: number;
+	aspect: string;
 	canvas: { width: number; height: number };
 	media: ReportMedia[];
 	clips: ReportClip[];
@@ -48,6 +51,7 @@ export function isReadyReport(value: unknown): value is Report {
 		typeof report.sourceHash === "string" &&
 		typeof report.projectName === "string" &&
 		Number.isInteger(report.fps) &&
+		typeof report.aspect === "string" &&
 		Number.isInteger(report.totalDurationTicks) &&
 		Number.isFinite(report.canvas?.width) &&
 		Number.isFinite(report.canvas?.height) &&
@@ -104,6 +108,9 @@ export function buildProject({ project, report, mapping }: {
 	const seenIds = new Set<string>();
 	const elements: VideoElement[] = report.clips.map((clip) => {
 		const asset = mapping.get(clip.assetId);
+		const sourceAsset = clip.cenatEdit ? mapping.get(clip.cenatEdit.sourceAssetId) : null;
+		if (clip.cenatEdit && !sourceAsset)
+			throw new Error(`Clip ${clip.sourceId} has no original Cenat media.`);
 		if (!asset || !clip.sourceId || seenIds.has(clip.sourceId))
 			throw new Error(`Clip ${clip.sourceId} has no unique mapped media.`);
 		seenIds.add(clip.sourceId);
@@ -128,6 +135,15 @@ export function buildProject({ project, report, mapping }: {
 			id: clip.sourceId,
 			type: "video",
 			mediaId: asset.id,
+			...(clip.cenatEdit ? {
+				cenatEdit: {
+					clip: clip.cenatEdit.clip,
+					sourceMediaId: sourceAsset!.id,
+					proxyMediaId: asset.id,
+					fps: report.fps,
+					aspect: report.aspect,
+				},
+			} : {}),
 			name: clip.name,
 			startTime: roundMediaTime({ time: clip.startTicks }),
 			duration: roundMediaTime({ time: clip.durationTicks }),
