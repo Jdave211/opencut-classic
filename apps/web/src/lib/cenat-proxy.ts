@@ -1,6 +1,7 @@
-// Same-origin route served by Next.js. The browser never needs to reach the local
-// Cenat service on a different origin, which also works in embedded browsers.
-export const CENAT_API_ORIGIN = "/cenat";
+// Cenat's primary editor uses the app's own /api and media routes. The
+// standalone OpenCut route retains its /cenat proxy for old test projects.
+export const CENAT_API_ORIGIN = typeof window !== "undefined" &&
+	new URLSearchParams(window.location.search).get("direct") === "1" ? "" : "/cenat";
 const MEDIA_CHUNK_BYTES = 8 * 1024 * 1024;
 const MEDIA_ATTEMPTS = 3;
 

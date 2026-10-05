@@ -10,7 +10,6 @@ import type { EditorCore } from "@/core";
 import { CENAT_API_ORIGIN, renderCenatClip, renderCenatStill } from "@/lib/cenat-proxy";
 import { FONT_SIZE_SCALE_REFERENCE } from "@/text/typography";
 
-const CHANNEL = "cenat-primary-editor";
 const TICKS = 120_000;
 const API = CENAT_API_ORIGIN;
 function cenatUrl(path: string): string {
@@ -63,7 +62,29 @@ type CenatLaunch = { message: string; requestId?: string; model?: string; assetI
 export type CenatVersion = { index: number; label: string; date: string };
 export type CenatCheckpoint = { id: string; name: string; date: string };
 export type CenatConversationMessage = { id?: string; role: "user" | "assistant"; text: string };
-type Reply = { channel: string; projectId: string; requestId: string; type: string; project?: CenatProject; editorProject?: unknown; assets?: CenatAsset[]; revision?: string; error?: string; launch?: CenatLaunch; summary?: string; changed?: boolean; versions?: CenatVersion[]; checkpoints?: CenatCheckpoint[]; cursor?: number; messages?: CenatConversationMessage[] };
+type Reply = { type: string; project?: CenatProject; editorProject?: unknown; assets?: CenatAsset[]; revision?: string; error?: string; launch?: CenatLaunch; summary?: string; changed?: boolean; versions?: CenatVersion[]; checkpoints?: CenatCheckpoint[]; cursor?: number; messages?: CenatConversationMessage[] };
+
+declare global {
+	interface Window {
+		CenatEditorGateway?: { request: (projectId: string, type: string, data?: object) => Promise<Record<string, unknown>> };
+	}
+}
+
+let directGateway: Promise<NonNullable<Window["CenatEditorGateway"]>> | null = null;
+function getDirectGateway(): Promise<NonNullable<Window["CenatEditorGateway"]>> {
+	if (window.CenatEditorGateway) return Promise.resolve(window.CenatEditorGateway);
+	if (!directGateway) directGateway = new Promise<NonNullable<Window["CenatEditorGateway"]>>((resolve, reject) => {
+		const script = document.createElement("script");
+		script.type = "module";
+		script.src = window.location.port === "5173"
+			? "/src/direct-editor-api.ts" : "/cenat-direct-editor-api.js";
+		script.onload = () => window.CenatEditorGateway
+			? resolve(window.CenatEditorGateway) : reject(new Error("Cenat's project store could not start."));
+		script.onerror = () => reject(new Error("Cenat's project store could not load."));
+		document.head.append(script);
+	}).catch((error: unknown) => { directGateway = null; throw error; });
+	return directGateway!;
+}
 
 function isCenatClip(value: unknown): value is CenatClip {
 	return !!value && typeof value === "object" &&
@@ -100,38 +121,9 @@ function isCenatMarker(value: unknown): value is CenatMarker {
 
 let active: CenatPrimarySession | null = null;
 
-function parentOrigin(): string {
-	const value = new URLSearchParams(window.location.search).get("parentOrigin");
-	if (!value) throw new Error("Open this project from Cenat.");
-	const origin = new URL(value);
-	if (!["localhost", "127.0.0.1"].includes(origin.hostname)) throw new Error("Invalid Cenat origin.");
-	return origin.origin;
-}
-
-function request({ projectId, type, data = {}, timeoutMs = 20_000 }: { projectId: string; type: string; data?: object; timeoutMs?: number }): Promise<Reply> {
-	const origin = parentOrigin();
-	if (window.parent === window) throw new Error("Open this project from Cenat.");
-	const requestId = crypto.randomUUID();
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => { window.removeEventListener("message", receive); reject(new Error("Cenat did not respond.")); }, timeoutMs);
-		const receive = (event: MessageEvent) => {
-			if (event.origin !== origin || event.source !== window.parent) return;
-			const body: unknown = event.data;
-			if (!body || typeof body !== "object" ||
-				!("channel" in body) || body.channel !== CHANNEL ||
-				!("requestId" in body) || body.requestId !== requestId ||
-				!("projectId" in body) || body.projectId !== projectId) return;
-			clearTimeout(timer);
-			window.removeEventListener("message", receive);
-			// Transport envelope and sender have been checked above.
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-			const reply = body as Reply;
-			if (reply.type === "error") reject(new Error(reply.error || "Cenat could not save the project."));
-			else resolve(reply);
-		};
-		window.addEventListener("message", receive);
-		window.parent.postMessage({ channel: CHANNEL, projectId, requestId, type, ...data }, origin);
-	});
+async function request({ projectId, type, data = {} }: { projectId: string; type: string; data?: object; timeoutMs?: number }): Promise<Reply> {
+	const gateway = await getDirectGateway();
+	return await gateway.request(projectId, type, data) as Reply;
 }
 
 const CANVAS_ASPECTS = ["16:9", "9:16", "1:1", "4:5", "4:3", "3:4", "3:2", "2:3", "5:4", "21:9"] as const;
@@ -310,7 +302,7 @@ export class CenatPrimarySession {
 
 	static async open({ id, onProgress }: { id: string; onProgress?: (message: string) => void }): Promise<{ session: CenatPrimarySession; project: TProject; media: MediaAsset[] }> {
 		const reply = await request({ projectId: id, type: "ready" }).catch((error: unknown) => {
-			throw new Error(`Cenat project handshake failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+			throw new Error(`Could not open the Cenat project: ${error instanceof Error ? error.message : "Unknown error"}`);
 		});
 		if (!reply.project || !reply.assets || !reply.revision) throw new Error("Cenat sent an incomplete project.");
 		const canonicalProject = reply.project;
