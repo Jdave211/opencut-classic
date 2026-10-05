@@ -41,6 +41,7 @@ type CenatProject = { name: string; aspect: string; fps?: number; clips: CenatCl
 type CenatAsset = {
 	id: string; name: string; url: string; thumbnail?: string;
 	duration: number; width: number; height: number; hasAudio: boolean; kind?: string;
+	projectId?: string;
 };
 type Reply = { channel: string; projectId: string; requestId: string; type: string; project?: CenatProject; editorProject?: unknown; assets?: CenatAsset[]; revision?: string; error?: string };
 
@@ -292,7 +293,7 @@ export class CenatPrimarySession {
 			...canonicalProject.clips.map((clip) => clip.assetId),
 			...(canonicalProject.tracks || []).flatMap((track) => track.items.map((item) => item.assetId)),
 		]);
-		const sources = canonicalAssets.filter((asset) => referenced.has(asset.id));
+		const sources = canonicalAssets.filter((asset) => referenced.has(asset.id) || asset.projectId === id);
 		const media: MediaAsset[] = [];
 		for (const source of sources) {
 			const sourceUrl = cenatUrl(source.url);

@@ -75,6 +75,14 @@ const TEXT_PARAM_KEYS = [
 	"background.offsetY",
 ] as const;
 
+const CENAT_TEXT_PARAM_KEYS = [
+	"content", "fontFamily", "fontSize", "color", "fontWeight", "fontStyle", "background.enabled",
+] as const;
+
+const CENAT_TEXT_TRANSFORM_KEYS = [
+	"transform.positionX", "transform.positionY", "transform.rotate",
+] as const;
+
 export type TabContentProps = {
 	trackId: string;
 };
@@ -192,7 +200,7 @@ function buildClipEffectsTab({
 	};
 }
 
-function buildTextTab({ element }: { element: TextElement }): PropertiesTabDef {
+function buildTextTab({ element, cenat = false }: { element: TextElement; cenat?: boolean }): PropertiesTabDef {
 	return {
 		id: "text",
 		label: "Text",
@@ -201,7 +209,7 @@ function buildTextTab({ element }: { element: TextElement }): PropertiesTabDef {
 			<ElementParamsTab
 				element={element}
 				trackId={trackId}
-				paramKeys={TEXT_PARAM_KEYS}
+				paramKeys={cenat ? CENAT_TEXT_PARAM_KEYS : TEXT_PARAM_KEYS}
 				sectionKey="text"
 			/>
 		),
@@ -241,14 +249,18 @@ function getTextConfig({
 }: {
 	element: TextElement;
 }): ElementPropertiesConfig {
+	const cenat = !!getCenatPrimarySession();
 	return {
 		defaultTab: "text",
 		tabs: [
-			buildTextTab({ element }),
-			...(getCenatPrimarySession() ? [{ id: "style", label: "Style", icon: <HugeiconsIcon icon={TextFontIcon} size={16} />,
+			buildTextTab({ element, cenat }),
+			...(cenat ? [{ id: "style", label: "Style", icon: <HugeiconsIcon icon={TextFontIcon} size={16} />,
 				content: ({ trackId }: TabContentProps) => <CenatTextTab key={`${element.id}:${JSON.stringify(element.cenatTextStyle)}`} element={element} trackId={trackId} /> }] : []),
-			buildTransformTab({ element }),
-			buildBlendingTab({ element }),
+			...(cenat ? [{ id: "transform", label: "Transform", icon: <HugeiconsIcon icon={ArrowExpandIcon} size={16} />,
+				content: ({ trackId }: TabContentProps) => <ElementParamsTab element={element} trackId={trackId}
+					paramKeys={CENAT_TEXT_TRANSFORM_KEYS} sectionKey="transform" /> }] : [
+				buildTransformTab({ element }), buildBlendingTab({ element }),
+			]),
 		],
 	};
 }
