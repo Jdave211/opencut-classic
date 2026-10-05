@@ -61,7 +61,9 @@ function mediaAssetForSource({ source, fps }: { source: CenatAsset; fps: number 
 }
 type CenatLaunch = { message: string; requestId?: string; model?: string; assetIds?: string[] };
 export type CenatVersion = { index: number; label: string; date: string };
-type Reply = { channel: string; projectId: string; requestId: string; type: string; project?: CenatProject; editorProject?: unknown; assets?: CenatAsset[]; revision?: string; error?: string; launch?: CenatLaunch; summary?: string; changed?: boolean; versions?: CenatVersion[]; cursor?: number };
+export type CenatCheckpoint = { id: string; name: string; date: string };
+export type CenatConversationMessage = { id?: string; role: "user" | "assistant"; text: string };
+type Reply = { channel: string; projectId: string; requestId: string; type: string; project?: CenatProject; editorProject?: unknown; assets?: CenatAsset[]; revision?: string; error?: string; launch?: CenatLaunch; summary?: string; changed?: boolean; versions?: CenatVersion[]; checkpoints?: CenatCheckpoint[]; cursor?: number; messages?: CenatConversationMessage[] };
 
 function isCenatClip(value: unknown): value is CenatClip {
 	return !!value && typeof value === "object" &&
@@ -558,11 +560,21 @@ export class CenatPrimarySession {
 		}
 	}
 
-	async getHistory({ project }: { project: TProject }): Promise<{ versions: CenatVersion[]; cursor: number }> {
+	async getHistory({ project }: { project: TProject }): Promise<{ versions: CenatVersion[]; checkpoints: CenatCheckpoint[]; cursor: number }> {
 		await this.save({ project });
 		const reply = await request({ projectId: this.id, type: "history", data: { revision: this.revision } });
-		if (!reply.versions || reply.cursor === undefined) throw new Error("Cenat did not return the project history.");
-		return { versions: reply.versions, cursor: reply.cursor };
+		if (!reply.versions || !reply.checkpoints || reply.cursor === undefined) throw new Error("Cenat did not return the project history.");
+		return { versions: reply.versions, checkpoints: reply.checkpoints, cursor: reply.cursor };
+	}
+
+	async saveCheckpoint(name: string): Promise<void> {
+		await request({ projectId: this.id, type: "save-checkpoint", data: { revision: this.revision, name } });
+	}
+
+	async getConversation(): Promise<CenatConversationMessage[]> {
+		const reply = await request({ projectId: this.id, type: "conversation" });
+		if (!Array.isArray(reply.messages)) throw new Error("Cenat did not return the Jev conversation.");
+		return reply.messages;
 	}
 
 	async restoreVersion(index: number): Promise<void> {
@@ -570,6 +582,19 @@ export class CenatPrimarySession {
 		try {
 			const reply = await request({ projectId: this.id, type: "restore", data: { revision: this.revision, index } });
 			if (!reply.revision) throw new Error("Cenat did not confirm the restored version.");
+			this.revision = reply.revision;
+			this.reopeningAfterReplacement = true;
+		} catch (error) {
+			this.replacementRunning = false;
+			throw error;
+		}
+	}
+
+	async restoreCheckpoint(id: string): Promise<void> {
+		this.replacementRunning = true;
+		try {
+			const reply = await request({ projectId: this.id, type: "restore-checkpoint", data: { revision: this.revision, checkpointId: id } });
+			if (!reply.revision) throw new Error("Cenat did not confirm the restored checkpoint.");
 			this.revision = reply.revision;
 			this.reopeningAfterReplacement = true;
 		} catch (error) {
