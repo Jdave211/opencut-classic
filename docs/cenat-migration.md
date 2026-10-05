@@ -1,6 +1,6 @@
 # Cenat migration into the OpenCut Classic fork
 
-> Historical pilot record. Cenat's home now opens this editor directly for existing and new projects. Compatibility reports and separate destination projects are no longer part of the normal editing flow. See [the current integration](cenat-editor-integration.md).
+> Historical pilot record. Cenat's home now opens this editor directly for existing and new projects. The compatibility and separate-destination screens described below have been removed; these steps cannot be used as current instructions. See [the current integration](cenat-editor-integration.md).
 
 The initial pilot ran alongside the existing Cenat editor and used compatibility gates before importing a separate project. That pilot started from OpenCut Classic commit `cf5e79e919144200294fb9fed22a222592a0aeea`.
 
