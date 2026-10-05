@@ -37,6 +37,7 @@ import {
 } from "./nodes/graphic-node";
 import { ImageNode, loadImageSource } from "./nodes/image-node";
 import { StickerNode, loadStickerSource } from "./nodes/sticker-node";
+import { renderCenatOverlay } from "@/lib/cenat-overlay-render";
 import { TextNode, type ResolvedTextNodeState } from "./nodes/text-node";
 import { VideoNode } from "./nodes/video-node";
 import type {
@@ -49,6 +50,8 @@ type ResolveContext = {
 	renderer: CanvasRenderer;
 	time: number;
 };
+
+const cenatOverlayFrames = new WeakMap<StickerNode, { key: string; source: OffscreenCanvas }>();
 
 export async function resolveRenderTree({
 	node,
@@ -265,6 +268,27 @@ async function resolveStickerNode({
 	node: StickerNode;
 	context: ResolveContext;
 }): Promise<ResolvedVisualSourceNodeState | null> {
+	if (node.params.cenatOverlay && node.params.cenatCanvas) {
+		const { width: sourceWidth, height: sourceHeight } = node.params.cenatCanvas;
+		const visualState = resolveVisualState({ params: node.params, context, sourceWidth, sourceHeight });
+		if (!visualState) return null;
+		const rate = node.params.cenatSourceRate || 1;
+		const elapsedSeconds = visualState.localTime / 120_000 * rate;
+		const remainingSeconds = (node.params.duration - visualState.localTime) / 120_000 * rate;
+		const key = elapsedSeconds > 1 && remainingSeconds > 1 ? "settled"
+			: `${Math.round(elapsedSeconds * 60)}:${Math.round(remainingSeconds * 60)}`;
+		let cached = cenatOverlayFrames.get(node);
+		if (!cached || cached.key !== key) {
+			cached = { key, source: renderCenatOverlay({
+				overlay: node.params.cenatOverlay, canvasSize: node.params.cenatCanvas,
+				elapsedSeconds: key === "settled" ? 1 : elapsedSeconds,
+				remainingSeconds: key === "settled" ? 1 : remainingSeconds,
+			}) };
+			cenatOverlayFrames.set(node, cached);
+		}
+		const source = cached.source;
+		return { ...visualState, source, sourceWidth, sourceHeight };
+	}
 	const source = await loadStickerSource({ stickerId: node.params.stickerId });
 	const sourceWidth = node.params.intrinsicWidth ?? source.width;
 	const sourceHeight = node.params.intrinsicHeight ?? source.height;

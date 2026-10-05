@@ -268,8 +268,8 @@ function MediaAssetDraggable({
 		startTime: MediaTime;
 	}) => {
 		const cenatSession = getCenatPrimarySession();
-		if (cenatSession && asset.type !== "video") {
-			toast.error("This media type is not available on Cenat's main timeline yet.");
+		if (cenatSession && asset.type === "audio") {
+			toast.error("Add audio to a sound track.");
 			return;
 		}
 		const mainTrackId = editor.scenes.getActiveSceneOrNull()?.tracks.main.id;
@@ -286,7 +286,7 @@ function MediaAssetDraggable({
 			startTime: insertTime,
 		});
 		editor.timeline.insertElement({
-			element,
+			element: cenatSession ? cenatSession.decorateNewMainElement({ element, asset }) : element,
 			placement: cenatSession && mainTrackId ? { mode: "explicit", trackId: mainTrackId } : { mode: "auto" },
 		});
 	};

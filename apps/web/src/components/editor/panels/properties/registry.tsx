@@ -32,6 +32,7 @@ import { CenatEditsTab } from "./components/cenat-edits-tab";
 import { CenatTrackTab } from "./components/cenat-track-tab";
 import { CenatTextTools } from "./components/cenat-text-tools";
 import { CenatTextTab } from "./components/cenat-text-tab";
+import { CenatGraphicTab } from "./components/cenat-graphic-tab";
 import { getCenatPrimarySession } from "@/lib/cenat-primary";
 
 function buildCenatTrackTab({ element }: { element: AudioElement | ImageElement | VideoElement }): PropertiesTabDef {
@@ -244,7 +245,7 @@ function getTextConfig({
 		defaultTab: "text",
 		tabs: [
 			buildTextTab({ element }),
-			...(getCenatPrimarySession() ? [{ id: "cenat", label: "Cenat", icon: <HugeiconsIcon icon={TextFontIcon} size={16} />,
+			...(getCenatPrimarySession() ? [{ id: "style", label: "Style", icon: <HugeiconsIcon icon={TextFontIcon} size={16} />,
 				content: ({ trackId }: TabContentProps) => <CenatTextTab key={`${element.id}:${JSON.stringify(element.cenatTextStyle)}`} element={element} trackId={trackId} /> }] : []),
 			buildTransformTab({ element }),
 			buildBlendingTab({ element }),
@@ -305,6 +306,19 @@ function getImageConfig({
 }: {
 	element: ImageElement;
 }): ElementPropertiesConfig {
+	if (element.cenatEdit) {
+		const section = ({ id, label }: { id: "color" | "effects" | "transitions"; label: string }): PropertiesTabDef => ({
+			id, label, icon: <HugeiconsIcon icon={MagicWand05Icon} size={16} />,
+			content: ({ trackId }) => <CenatEditsTab key={`${element.id}:${id}:${JSON.stringify(element.cenatEdit?.clip)}`}
+				element={element} trackId={trackId} section={id} />,
+		});
+		return { defaultTab: "color", tabs: [
+			section({ id: "color", label: "Color" }), section({ id: "effects", label: "Effects" }),
+			section({ id: "transitions", label: "Transitions" }),
+			{ id: "text", label: "Text", icon: <HugeiconsIcon icon={TextFontIcon} size={16} />,
+				content: () => <CenatTextTools clip={element} /> },
+		] };
+	}
 	return {
 		defaultTab: "transform",
 		tabs: element.cenatItem ? [buildTransformTab({ element }), buildCenatTrackTab({ element })] : [
@@ -321,6 +335,12 @@ function getStickerConfig({
 }: {
 	element: StickerElement;
 }): ElementPropertiesConfig {
+	if (element.cenatOverlays || element.cenatOverlayStyle) return {
+		defaultTab: "design",
+		tabs: [{ id: "design", label: "Design", icon: <OcShapesIcon size={16} />,
+			content: ({ trackId }) => <CenatGraphicTab key={`${element.id}:${JSON.stringify(element.cenatOverlayStyle)}`}
+				element={element} trackId={trackId} /> }],
+	};
 	return {
 		defaultTab: "transform",
 		tabs: [

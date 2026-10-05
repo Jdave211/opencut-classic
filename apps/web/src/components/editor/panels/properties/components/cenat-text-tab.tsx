@@ -48,8 +48,12 @@ export function CenatTextTab({ element, trackId }: { element: TextElement; track
 			onChange={(event) => change({ key, value: event.target.value === "none" ? undefined : event.target.value })}>
 			{values.map((value) => <option key={value} value={value}>{value}</option>)}
 		</select></label>;
+	const numberInput = ({ label, key, min, max, step, fallback }: { label: string; key: string; min: number; max: number; step: number; fallback: number }) =>
+		<label className="block space-y-1" key={key}><span>{label}</span><input className="bg-background w-full rounded border p-2"
+			type="number" min={min} max={max} step={step} value={Number(draft[key] ?? fallback)}
+			onChange={(event) => change({ key, value: Number(event.target.value) })} /></label>;
 	return <div className="space-y-4 p-4 text-sm">
-		<h3 className="font-semibold">Cenat text</h3>
+		<h3 className="font-semibold">Text style and motion</h3>
 		<label className="block space-y-1"><span>Type</span><select className="bg-background w-full rounded border p-2"
 			value={kind} onChange={(event) => change({ key: "kind", value: event.target.value })}>
 			<option value="text">Title</option><option value="subtitle">Caption</option>
@@ -57,14 +61,28 @@ export function CenatTextTab({ element, trackId }: { element: TextElement; track
 		{select({ label: "Entrance", key: "animation", values: MOTIONS })}
 		{select({ label: "Exit", key: "exitAnimation", values: MOTIONS })}
 		{select({ label: "Text treatment", key: "textStyle", values: STYLES })}
+		<label className="block space-y-1"><span>Treatment color</span><input className="bg-background h-10 w-full rounded border p-1"
+			type="color" value={String(draft.styleColor || "#ffe14d")}
+			onChange={(event) => change({ key: "styleColor", value: event.target.value })} /></label>
+		{numberInput({ label: "Treatment delay (seconds)", key: "styleDelay", min: 0, max: 30, step: 0.05, fallback: 0.35 })}
 		{select({ label: "Motion while visible", key: "floatStyle", values: FLOATS })}
 		{kind === "text" && select({ label: "Title design", key: "remotionTemplate", values: TEMPLATES })}
+		{kind === "text" && select({ label: "Title motion", key: "titleMotion", values: ["none", "restrained", "standard", "punchy"] })}
+		{kind === "text" && numberInput({ label: "Arc curve", key: "titleCurve", min: -0.8, max: 0.8, step: 0.05, fallback: 0 })}
+		{kind === "text" && select({ label: "Depth", key: "depth", values: ["none", "front", "behind-subject"] })}
 		{kind === "text" && <label className="block space-y-1"><span>Supporting text</span>
 			<input className="bg-background w-full rounded border p-2" value={String(draft.titleContext ?? "")}
 				onChange={(event) => change({ key: "titleContext", value: event.target.value || undefined })} /></label>}
 		<label className="block space-y-1"><span>Outline width</span><input className="bg-background w-full rounded border p-2"
 			type="number" min={0} max={0.02} step={0.001} value={Number(draft.outline ?? 0)}
 			onChange={(event) => change({ key: "outline", value: Number(event.target.value) })} /></label>
+		<label className="block space-y-1"><span>Outline color</span><input className="bg-background h-10 w-full rounded border p-1"
+			type="color" value={String(draft.outlineColor || "#171717")}
+			onChange={(event) => change({ key: "outlineColor", value: event.target.value })} /></label>
+		{numberInput({ label: "Letter spacing", key: "tracking", min: -0.1, max: 0.6, step: 0.01, fallback: 0 })}
+		{kind === "subtitle" && <label className="block space-y-1"><span>Word highlight</span><input className="bg-background h-10 w-full rounded border p-1"
+			type="color" value={String(draft.highlight || "#ffd60a")}
+			onChange={(event) => change({ key: "highlight", value: event.target.value })} /></label>}
 		{kind === "subtitle" && words.length > 0 && <details><summary className="cursor-pointer font-medium">Timed words ({words.length})</summary>
 			<p className="text-muted-foreground py-2">Times are seconds in the source video. Editing a word updates the caption text.</p>
 			<div className="space-y-2">{words.map((word, index) => <div key={index} className="grid grid-cols-[1fr_5rem_5rem] gap-2">

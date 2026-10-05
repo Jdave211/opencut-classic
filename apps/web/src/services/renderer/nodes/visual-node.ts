@@ -18,6 +18,8 @@ export interface VisualNodeParams {
 	masks?: Mask[];
 	/** Cenat overlay framing and fades, applied only to imported track items. */
 	cenatVisual?: { fit: "cover" | "contain"; fadeIn: number; fadeOut: number };
+	/** Incoming cross dissolve on a main Cenat clip. */
+	cenatTransitionFadeIn?: number;
 }
 
 export interface ResolvedVisualNodeState {

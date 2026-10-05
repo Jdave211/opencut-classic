@@ -8,7 +8,6 @@ import {
 } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/utils/ui";
-import { getCenatPrimarySession } from "@/lib/cenat-primary";
 import {
 	TAB_KEYS,
 	tabs,
@@ -52,7 +51,7 @@ export function TabBar() {
 				ref={scrollRef}
 				className="scrollbar-hidden relative flex size-full p-1 flex-col items-center justify-start gap-0.5 overflow-y-auto"
 			>
-				{TAB_KEYS.filter((tabKey) => !getCenatPrimarySession() || tabKey !== "stickers").map((tabKey) => {
+				{TAB_KEYS.map((tabKey) => {
 					const tab = tabs[tabKey];
 					return (
 						<Tooltip key={tabKey} delayDuration={10}>

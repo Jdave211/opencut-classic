@@ -288,7 +288,9 @@ async function collectVisualSourceNode({
 		type: "layer",
 		textureId,
 		transform,
-		opacity: node.resolved.opacity * (cenat ? Math.min(1,
+		opacity: node.resolved.opacity *
+			(node.params.cenatTransitionFadeIn ? Math.min(1, node.resolved.localTime / (node.params.cenatTransitionFadeIn * 120_000)) : 1) *
+			(cenat ? Math.min(1,
 			cenat.fadeIn > 0 ? node.resolved.localTime / (cenat.fadeIn * 120_000) : 1,
 			cenat.fadeOut > 0 ? (node.params.duration - node.resolved.localTime) / (cenat.fadeOut * 120_000) : 1) : 1),
 		blendMode: node.params.blendMode ?? "normal",

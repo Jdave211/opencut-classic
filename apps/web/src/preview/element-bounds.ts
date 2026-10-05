@@ -8,6 +8,7 @@ import {
 } from "@/animation";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
 import { buildTransformFromParams } from "@/rendering";
+import { graphicPrimitives } from "@/lib/cenat-graphics.mjs";
 
 export interface ElementBounds {
 	cx: number;
@@ -145,6 +146,45 @@ function getElementBounds({
 			animations: element.animations,
 			localTime,
 		});
+		if (element.cenatOverlays || element.cenatOverlayStyle) {
+			const overlay = { ...(element.cenatOverlays?.[0]?.overlay || {}), ...(element.cenatOverlayStyle || {}) };
+			const x = typeof overlay.x === "number" ? overlay.x : 0.5;
+			const y = typeof overlay.y === "number" ? overlay.y : 0.5;
+			const size = typeof overlay.size === "number" ? overlay.size : 0.15;
+			let left = x * canvasWidth - size * canvasHeight / 2;
+			let top = y * canvasHeight - size * canvasHeight / 2;
+			let right = left + size * canvasHeight;
+			let bottom = top + size * canvasHeight;
+			if (overlay.kind === "graphic") {
+				const primitives = graphicPrimitives(overlay, { w: canvasWidth, h: canvasHeight }, 1);
+				const xs: number[] = [];
+				const ys: number[] = [];
+				for (const primitive of primitives) {
+					if (primitive.t === "stroke") {
+						for (const points of primitive.subpaths) for (const point of points) {
+							xs.push(point[0]); ys.push(point[1]);
+						}
+					} else if (primitive.t === "disc") {
+						xs.push(primitive.cx - primitive.r, primitive.cx + primitive.r);
+						ys.push(primitive.cy - primitive.r, primitive.cy + primitive.r);
+					} else {
+						xs.push(primitive.x, primitive.x + primitive.w);
+						ys.push(primitive.y, primitive.y + primitive.h);
+					}
+				}
+				if (xs.length) {
+					const pad = Math.max(12, (typeof overlay.strokeWidth === "number" ? overlay.strokeWidth : 0.008) * canvasHeight * 2);
+					left = Math.min(...xs) - pad; right = Math.max(...xs) + pad;
+					top = Math.min(...ys) - pad; bottom = Math.max(...ys) + pad;
+				}
+			}
+			return getTransformedRectBounds({
+				canvasWidth, canvasHeight,
+				rect: { left: left - canvasWidth / 2, top: top - canvasHeight / 2,
+					width: Math.max(24, right - left), height: Math.max(24, bottom - top) },
+				transform,
+			});
+		}
 		return getVisualElementBounds({
 			canvasWidth,
 			canvasHeight,

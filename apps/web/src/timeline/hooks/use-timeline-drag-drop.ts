@@ -32,6 +32,7 @@ export function useTimelineDragDrop({
 		getSceneTracks: () => editor.scenes.getActiveScene().tracks,
 		getCurrentPlayheadTime: () => editor.playback.getCurrentTime(),
 		getMediaAssets: () => editor.media.getAssets(),
+		setMediaAssets: (assets) => editor.media.setAssets({ assets }),
 		dragSource: editor.timeline.dragSource,
 		addMediaAsset: (args) => editor.media.addMediaAsset(args),
 		executeCommand: (command) => editor.command.execute({ command }),

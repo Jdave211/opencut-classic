@@ -936,6 +936,12 @@ function StickerElementContent({
 }: {
 	element: Extract<TimelineElementType, { type: "sticker" }>;
 }) {
+	if (element.cenatOverlays || element.cenatOverlayStyle) return (
+		<div className="flex size-full items-center gap-2 pl-2">
+			<span className="text-base" aria-hidden="true">{(element.cenatOverlayStyle?.kind || element.cenatOverlays?.[0]?.overlay.kind) === "graphic" ? "◇" : "✦"}</span>
+			<span className="truncate text-xs text-white">{element.name}</span>
+		</div>
+	);
 	return (
 		<div className="flex size-full items-center gap-2 pl-2">
 			<Image

@@ -13,6 +13,7 @@ import { EffectsView } from "@/effects/components/assets-view";
 import { getCenatPrimarySession } from "@/lib/cenat-primary";
 import { useEditor } from "@/editor/use-editor";
 import { CenatEditsTab } from "@/components/editor/panels/properties/components/cenat-edits-tab";
+import { CenatGraphicTools } from "@/components/editor/panels/properties/components/cenat-graphic-tools";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 function CenatToolView({ section }: { section: "color" | "effects" | "transitions" | "text" | "audio" }) {
@@ -20,7 +21,7 @@ function CenatToolView({ section }: { section: "color" | "effects" | "transition
 	const selected = useEditor((current) => current.selection.getSelectedElements());
 	useEditor((current) => current.scenes.getActiveSceneOrNull());
 	const item = editor.timeline.getElementsWithTracks({ elements: selected })[0];
-	if (!item || item.element.type !== "video" || !item.element.cenatEdit)
+	if (!item || (item.element.type !== "video" && item.element.type !== "image") || !item.element.cenatEdit)
 		return <p className="text-muted-foreground p-4 text-sm">Select a clip on the timeline to edit its {section}.</p>;
 	return <ScrollArea className="h-full"><CenatEditsTab key={`${item.element.id}:${section}:${JSON.stringify(item.element.cenatEdit.clip)}`} element={item.element} trackId={item.track.id} section={section} /></ScrollArea>;
 }
@@ -33,7 +34,7 @@ export function AssetsPanel() {
 		media: <MediaView />,
 		sounds: <CenatToolView section="audio" />,
 		text: <TextView defaultKind="text" />,
-		stickers: null,
+	stickers: <CenatGraphicTools />,
 		effects: <CenatToolView section="effects" />,
 		transitions: <CenatToolView section="transitions" />,
 		captions: <TextView defaultKind="subtitle" />,

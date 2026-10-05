@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { useEditor } from "@/editor/use-editor";
 import { processMediaAssets } from "@/media/processing";
-import { CENAT_API_ORIGIN, renderCenatClip } from "@/lib/cenat-proxy";
-import type { VideoElement } from "@/timeline/types";
+import { CENAT_API_ORIGIN, renderCenatClip, renderCenatStill } from "@/lib/cenat-proxy";
+import type { ImageElement, VideoElement } from "@/timeline/types";
 import { roundMediaTime } from "@/wasm/media-time-rounding";
 import { getCenatPrimarySession } from "@/lib/cenat-primary";
 import type { MediaAsset } from "@/media/types";
@@ -116,7 +116,7 @@ function transitionOf(value: unknown): { type: string; duration: number } | null
 	return { type: value.type, duration };
 }
 
-export function CenatEditsTab({ element, trackId, section }: { element: VideoElement; trackId: string; section: "color" | "effects" | "text" | "audio" | "transitions" }) {
+export function CenatEditsTab({ element, trackId, section }: { element: VideoElement | ImageElement; trackId: string; section: "color" | "effects" | "text" | "audio" | "transitions" }) {
 	const editor = useEditor();
 	const edit = element.cenatEdit;
 	const [draft, setDraft] = useState<Record<string, unknown>>(() => structuredClone(edit?.clip ?? {}));
@@ -184,7 +184,8 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 				const timingCatalog: Catalog = catalog || await response!.json();
 				const main = editor.scenes.getActiveSceneOrNull()?.tracks.main;
 				if (!main) throw new Error("The main timeline is missing.");
-				const elements = main.elements.filter((entry): entry is VideoElement => entry.type === "video")
+				const elements = main.elements.filter((entry): entry is VideoElement | ImageElement =>
+					(entry.type === "video" || entry.type === "image") && !!entry.cenatEdit)
 					.slice().sort((a, b) => a.startTime - b.startTime);
 				const newStarts = new Map<string, number>();
 				let end = 0;
@@ -208,7 +209,8 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 				const scene = editor.scenes.getActiveSceneOrNull();
 				for (const layer of [...(scene?.tracks.overlay || []), ...(scene?.tracks.audio || [])]) {
 					for (const entry of layer.elements) {
-						const anchored = entry.cenatItem?.anchorClipId;
+						const anchored = entry.cenatItem?.anchorClipId ||
+							(entry.type === "text" || entry.type === "sticker" ? entry.cenatOverlays?.[0]?.clipId : undefined);
 						if (typeof anchored !== "string") continue;
 						const oldStart = elements.find((candidate) => candidate.id === anchored)?.startTime;
 						const newStart = newStarts.get(anchored);
@@ -231,14 +233,17 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 			const expectedSeconds = (Number(draft.out) - Number(draft.in)) / Number(draft.speed ?? 1);
 			if (!Number.isFinite(expectedSeconds) || Math.abs(rendered.duration - expectedSeconds) > 1 / edit.fps)
 				throw new Error("The replacement clip has a different duration. Keep the original trim when changing these edits.");
-			const file = new File([rendered.blob], `cenat-edit-${element.id}-${crypto.randomUUID()}.mp4`, { type: "video/mp4" });
+			const still = element.type === "image" ? await renderCenatStill({ videoBlob: rendered.blob }) : null;
+			const file = still
+				? new File([still], `cenat-edit-${element.id}-${crypto.randomUUID()}.png`, { type: "image/png" })
+				: new File([rendered.blob], `cenat-edit-${element.id}-${crypto.randomUUID()}.mp4`, { type: "video/mp4" });
 			let asset: MediaAsset | null;
 			if (getCenatPrimarySession()) {
 				asset = {
-					id: crypto.randomUUID(), name: file.name, type: "video", file,
+					id: crypto.randomUUID(), name: file.name, type: still ? "image" : "video", file,
 					url: URL.createObjectURL(file), duration: rendered.duration,
 					width: rendered.width, height: rendered.height,
-					hasAudio: Number(draft.volume ?? 1) !== 0, ephemeral: true,
+					hasAudio: !still && Number(draft.volume ?? 1) !== 0, ephemeral: true,
 					thumbnailUrl: editor.media.getAssets().find((item) => item.id === edit.sourceMediaId)?.thumbnailUrl,
 				};
 				editor.media.setAssets({ assets: [...editor.media.getAssets(), asset] });
@@ -256,11 +261,11 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 				elementId: element.id,
 				patch: {
 					mediaId: asset.id,
-					isSourceAudioEnabled: Number(draft.volume ?? 1) !== 0,
+					...(element.type === "video" ? { isSourceAudioEnabled: Number(draft.volume ?? 1) !== 0 } : {}),
 					sourceDuration,
 					trimStart: roundMediaTime({ time: 0 }),
 					trimEnd: roundMediaTime({ time: Math.max(0, sourceDuration - element.duration) }),
-					retime: undefined,
+					...(element.type === "video" ? { retime: undefined } : {}),
 					cenatEdit: { ...edit, clip: structuredClone(draft), proxyMediaId: asset.id },
 				},
 			}] });
@@ -316,6 +321,7 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 			{regionsOf(draft.colorRegions).map((region, index) => {
 				const regions = regionsOf(draft.colorRegions);
 				const polygon = pointsOf(region.points);
+				const exclusions = Array.isArray(region.exclusions) ? region.exclusions.map(recordOf) : [];
 				const update = (next: Record<string, unknown>) => changeRegions(regions.map((entry, i) => i === index ? next : entry));
 				return <div className="space-y-2 rounded border p-2" key={index}>
 					<div className="flex items-center justify-between"><strong>Region {index + 1}</strong><button className="text-destructive" onClick={() => changeRegions(regions.filter((_, i) => i !== index))}>Remove</button></div>
@@ -329,6 +335,15 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 						<input aria-label={`Region ${index + 1} point ${pointIndex + 1} Y`} className="bg-background min-w-0 rounded border p-2" type="number" min="0" max="1" step="0.01" value={point.y}
 							onChange={(event) => update({ ...region, points: polygon.map((entry, i) => i === pointIndex ? { ...entry, y: Number(event.target.value) } : entry) })} />
 					</div>)}</div>
+					<div className="flex gap-2">
+						<button type="button" className="rounded border px-2 py-1" disabled={polygon.length >= 32}
+							onClick={() => update({ ...region, points: [...polygon, {
+								x: (polygon[polygon.length - 1].x + polygon[0].x) / 2,
+								y: (polygon[polygon.length - 1].y + polygon[0].y) / 2,
+							}] })}>Add point</button>
+						<button type="button" className="rounded border px-2 py-1" disabled={polygon.length <= 3}
+							onClick={() => update({ ...region, points: polygon.slice(0, -1) })}>Remove last point</button>
+					</div>
 					<div className="grid grid-cols-2 gap-2">{[
 						{ key: "exposure", fallback: 0, min: -1.5, max: 1.5 },
 						{ key: "temperature", fallback: 0, min: -1, max: 1 },
@@ -338,9 +353,50 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 						{ key: "redGain", fallback: 1, min: 0.5, max: 1.5 },
 						{ key: "greenGain", fallback: 1, min: 0.5, max: 1.5 },
 						{ key: "blueGain", fallback: 1, min: 0.5, max: 1.5 },
+						{ key: "redOffset", fallback: 0, min: -0.12, max: 0.12 },
+						{ key: "greenOffset", fallback: 0, min: -0.12, max: 0.12 },
+						{ key: "blueOffset", fallback: 0, min: -0.12, max: 0.12 },
+						{ key: "maxLuma", fallback: 1, min: 0, max: 1 },
+						{ key: "lumaFeather", fallback: 0.15, min: 0.01, max: 0.4 },
 					].map((field) => <label className="space-y-1" key={field.key}><span>{field.key}</span><input className="bg-background w-full rounded border p-2" type="number"
 						min={field.min} max={field.max} step="0.01" value={Number(region[field.key] ?? field.fallback)}
 						onChange={(event) => update({ ...region, [field.key]: Number(event.target.value) })} /></label>)}</div>
+					<details><summary className="cursor-pointer font-medium">Exclusions ({exclusions.length})</summary>
+						<div className="space-y-2 pt-2">
+							<button type="button" className="rounded border px-2 py-1" disabled={exclusions.length >= 3}
+								onClick={() => update({ ...region, exclusions: [...exclusions, { points: [
+									{ x: 0.35, y: 0.35 }, { x: 0.65, y: 0.35 }, { x: 0.65, y: 0.65 }, { x: 0.35, y: 0.65 },
+								], feather: 0.015 }] })}>Add exclusion</button>
+							{exclusions.map((exclusion, exclusionIndex) => {
+								const vertices = pointsOf(exclusion.points);
+								const changeExclusion = (next: Record<string, unknown>) => update({ ...region,
+									exclusions: exclusions.map((entry, i) => i === exclusionIndex ? next : entry) });
+								return <div className="space-y-2 rounded border p-2" key={exclusionIndex}>
+									<div className="flex items-center justify-between"><strong>Exclusion {exclusionIndex + 1}</strong>
+										<button type="button" className="text-destructive" onClick={() => update({ ...region,
+											exclusions: exclusions.filter((_, i) => i !== exclusionIndex) })}>Remove</button></div>
+									<label className="block space-y-1"><span>Feather</span><input className="bg-background w-full rounded border p-2"
+										type="number" min="0.002" max="0.1" step="0.001" value={Number(exclusion.feather ?? 0.015)}
+										onChange={(event) => changeExclusion({ ...exclusion, feather: Number(event.target.value) })} /></label>
+									{vertices.map((point, vertexIndex) => <div className="grid grid-cols-2 gap-1" key={vertexIndex}>
+										{(["x", "y"] as const).map((key) => <label className="space-y-1" key={key}><span>Point {vertexIndex + 1} {key.toUpperCase()}</span>
+											<input className="bg-background w-full rounded border p-2" type="number" min="0" max="1" step="0.01"
+												value={point[key]} onChange={(event) => changeExclusion({ ...exclusion,
+													points: vertices.map((entry, i) => i === vertexIndex ? { ...entry, [key]: Number(event.target.value) } : entry) })} /></label>)}
+									</div>)}
+									<div className="flex gap-2">
+										<button type="button" className="rounded border px-2 py-1" disabled={vertices.length >= 32}
+											onClick={() => changeExclusion({ ...exclusion, points: [...vertices, {
+												x: (vertices[vertices.length - 1].x + vertices[0].x) / 2,
+												y: (vertices[vertices.length - 1].y + vertices[0].y) / 2,
+											}] })}>Add point</button>
+										<button type="button" className="rounded border px-2 py-1" disabled={vertices.length <= 3}
+											onClick={() => changeExclusion({ ...exclusion, points: vertices.slice(0, -1) })}>Remove last point</button>
+									</div>
+								</div>;
+							})}
+						</div>
+					</details>
 				</div>;
 			})}
 			</div>

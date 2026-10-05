@@ -41,6 +41,17 @@ function cenatBlend({ element }: { element: VideoElement | ImageElement }): Blen
 	return null;
 }
 
+function cenatTransitionFadeIn({ element, previous }: {
+	element: VideoElement | ImageElement;
+	previous?: { startTime: number; duration: number };
+}): number {
+	const value = element.cenatEdit?.clip.transition;
+	if (!value || typeof value !== "object" || !("type" in value) || value.type !== "cross-dissolve" ||
+		!("duration" in value) || typeof value.duration !== "number") return 0;
+	const overlap = previous ? (previous.startTime + previous.duration - element.startTime) / 120_000 : 0;
+	return Math.max(0, Math.min(value.duration, overlap));
+}
+
 function getVisibleSortedElements({ track }: { track: TimelineTrack }) {
 	return track.elements
 		.filter((element) => !("hidden" in element && element.hidden))
@@ -67,7 +78,7 @@ function buildTrackNodes({
 	for (const track of tracks) {
 		const elements = getVisibleSortedElements({ track });
 
-		for (const element of elements) {
+		for (const [index, element] of elements.entries()) {
 			if (element.type === "effect") {
 				nodes.push(
 					new EffectLayerNode({
@@ -102,6 +113,7 @@ function buildTrackNodes({
 							opacity: readOpacityFromParams({ params: element.params }),
 							blendMode: cenatBlend({ element }) || readBlendModeFromParams({ params: element.params }),
 							cenatVisual: cenatVisual({ element }),
+							cenatTransitionFadeIn: cenatTransitionFadeIn({ element, previous: elements[index - 1] }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
 						}),
@@ -120,6 +132,7 @@ function buildTrackNodes({
 							opacity: readOpacityFromParams({ params: element.params }),
 							blendMode: cenatBlend({ element }) || readBlendModeFromParams({ params: element.params }),
 							cenatVisual: cenatVisual({ element }),
+							cenatTransitionFadeIn: cenatTransitionFadeIn({ element, previous: elements[index - 1] }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
 							...(isPreview && {
@@ -160,6 +173,13 @@ function buildTrackNodes({
 						opacity: readOpacityFromParams({ params: element.params }),
 						blendMode: readBlendModeFromParams({ params: element.params }),
 						effects: element.effects ?? [],
+						...(element.cenatOverlays || element.cenatOverlayStyle ? {
+							cenatOverlay: { ...(element.cenatOverlays?.[0]?.overlay || {}), ...(element.cenatOverlayStyle || {}) },
+							cenatSourceRate: element.cenatOverlaySourceRate || 1,
+							cenatCanvas: isPreview && canvasSize.height > 720
+								? { width: Math.round(canvasSize.width * 720 / canvasSize.height), height: 720 }
+								: canvasSize,
+						} : {}),
 					}),
 				);
 			}

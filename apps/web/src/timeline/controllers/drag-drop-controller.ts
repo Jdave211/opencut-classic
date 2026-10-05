@@ -32,6 +32,7 @@ import type { MediaAsset } from "@/media/types";
 import type { ProcessedMediaAsset } from "@/media/processing";
 import { roundFrameTime, type MediaTime } from "@/wasm";
 import { roundMediaTime } from "@/wasm/media-time-rounding";
+import { getCenatPrimarySession } from "@/lib/cenat-primary";
 
 // --- Config ---
 
@@ -45,6 +46,7 @@ export interface DragDropConfig {
 	getSceneTracks: () => SceneTracks;
 	getCurrentPlayheadTime: () => MediaTime;
 	getMediaAssets: () => MediaAsset[];
+	setMediaAssets: (assets: MediaAsset[]) => void;
 	dragSource: TimelineDragSource;
 	addMediaAsset: (args: {
 		projectId: string;
@@ -466,7 +468,11 @@ export class DragDropController {
 			duration: toElementDurationTicks({ seconds: mediaAsset.duration }),
 			startTime: target.xPosition,
 		});
-		this.insertAtTarget({ element, target, trackType });
+		const scene = this.config.getSceneTracks();
+		const onMain = !target.isNewTrack && orderedTracks({ sceneTracks: scene })[target.trackIndex]?.id === scene.main.id;
+		const session = getCenatPrimarySession();
+		this.insertAtTarget({ element: session && onMain
+			? session.decorateNewMainElement({ element, asset: mediaAsset }) : element, target, trackType });
 	}
 
 	private executeEffectDrop({
@@ -520,18 +526,24 @@ export class DragDropController {
 		await showMediaUploadToast({
 			filesCount: files.length,
 			promise: async () => {
-				const processedAssets = await processMediaAssets({ files });
+				const session = getCenatPrimarySession();
+				const createdAssets: MediaAsset[] = [];
+				if (session) {
+					const imported = await session.importFiles({ files });
+					this.config.setMediaAssets([...this.config.getMediaAssets(), ...imported]);
+					createdAssets.push(...imported);
+				} else {
+					const processedAssets = await processMediaAssets({ files });
+					for (const asset of processedAssets) {
+						const created = await this.config.addMediaAsset({ projectId, asset });
+						if (created) createdAssets.push(created);
+					}
+				}
 
 				// Sequential on purpose: each iteration reads getSceneTracks()
 				// to decide placement (reuse empty main vs new track) and that
 				// decision depends on the effects of prior inserts.
-				for (const asset of processedAssets) {
-					const createdAsset = await this.config.addMediaAsset({
-						projectId,
-						asset,
-					});
-					if (!createdAsset) continue;
-
+				for (const createdAsset of createdAssets) {
 					const duration = toElementDurationTicks({
 						seconds: createdAsset.duration,
 					});
@@ -548,15 +560,13 @@ export class DragDropController {
 							: null;
 
 					if (reuseMainTrackId) {
+						const element = buildElementFromMedia({
+							mediaId: createdAsset.id, mediaType: createdAsset.type,
+							name: createdAsset.name, duration, startTime: currentTime,
+						});
 						this.config.insertElement({
 							placement: { mode: "explicit", trackId: reuseMainTrackId },
-							element: buildElementFromMedia({
-								mediaId: createdAsset.id,
-								mediaType: createdAsset.type,
-								name: createdAsset.name,
-								duration,
-								startTime: currentTime,
-							}),
+							element: session ? session.decorateNewMainElement({ element, asset: createdAsset }) : element,
 						});
 						continue;
 					}
@@ -575,22 +585,23 @@ export class DragDropController {
 
 					const trackType: TrackType =
 						createdAsset.type === "audio" ? "audio" : "video";
-					this.insertAtTarget({
-						element: buildElementFromMedia({
+					const element = buildElementFromMedia({
 							mediaId: createdAsset.id,
 							mediaType: createdAsset.type,
 							name: createdAsset.name,
 							duration,
 							startTime: dropTarget.xPosition,
-						}),
-						target: dropTarget,
-						trackType,
-					});
+						});
+					const onMain = !dropTarget.isNewTrack &&
+						orderedTracks({ sceneTracks })[dropTarget.trackIndex]?.id === sceneTracks.main.id;
+					this.insertAtTarget({ element: session && onMain
+						? session.decorateNewMainElement({ element, asset: createdAsset }) : element,
+						target: dropTarget, trackType });
 				}
 
 				return {
-					uploadedCount: processedAssets.length,
-					assetNames: processedAssets.map((asset) => asset.name),
+					uploadedCount: createdAssets.length,
+					assetNames: createdAssets.map((asset) => asset.name),
 				};
 			},
 		});

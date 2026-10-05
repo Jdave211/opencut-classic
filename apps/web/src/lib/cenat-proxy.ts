@@ -60,22 +60,23 @@ export async function renderCenatClip({
 	clip,
 	fps,
 	aspect,
+	preview = false,
 	onProgress,
 }: {
 	clip: Record<string, unknown>;
 	fps: number;
 	aspect: string;
+	preview?: boolean;
 	onProgress?: (progress: number) => void;
 }): Promise<{ blob: Blob; duration: number; width: number; height: number }> {
 	let response: Response;
 	try {
-		response = await fetch(`${CENAT_API_ORIGIN}/api/export`, {
+		response = await fetch(`${CENAT_API_ORIGIN}/api/${preview ? "preview" : "export"}`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				project: { name: "OpenCut editable clip", aspect, fps, clips: [clip] },
-				resolution: "720",
-				requestId: `opencut-${crypto.randomUUID()}`,
+				...(!preview ? { resolution: "720", requestId: `opencut-${crypto.randomUUID()}` } : {}),
 			}),
 		});
 	} catch {
@@ -91,9 +92,39 @@ export async function renderCenatClip({
 		if (!status.ok) throw new Error("The clip render status could not be read.");
 		job = await status.json();
 	}
-	if (!job.url?.startsWith("/exports/") || !Number.isFinite(job.duration) ||
+	if (!job.url?.startsWith(preview ? "/previews/" : "/exports/") || !Number.isFinite(job.duration) ||
 		!Number.isFinite(job.width) || !Number.isFinite(job.height))
 		throw new Error("The rendered clip is missing its video metadata.");
 	const blob = await copyLocalVideo({ url: `${CENAT_API_ORIGIN}${job.url}` });
 	return { blob, duration: job.duration!, width: job.width!, height: job.height! };
+}
+
+/** Take a representative frame from Cenat's exact clip render for still-photo previews. */
+export async function renderCenatStill({ videoBlob }: { videoBlob: Blob }): Promise<Blob> {
+	const url = URL.createObjectURL(videoBlob);
+	const video = document.createElement("video");
+	video.muted = true;
+	video.preload = "auto";
+	video.playsInline = true;
+	try {
+		await new Promise<void>((resolve, reject) => {
+			video.onloadeddata = () => resolve();
+			video.onerror = () => reject(new Error("The graded photo preview could not be decoded."));
+			video.src = url;
+			video.load();
+		});
+		if (!video.videoWidth || !video.videoHeight) throw new Error("The graded photo has no image frame.");
+		const canvas = document.createElement("canvas");
+		canvas.width = video.videoWidth;
+		canvas.height = video.videoHeight;
+		const context = canvas.getContext("2d");
+		if (!context) throw new Error("The graded photo could not be drawn.");
+		context.drawImage(video, 0, 0, canvas.width, canvas.height);
+		return await new Promise<Blob>((resolve, reject) =>
+			canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("The graded photo could not be saved.")), "image/png"));
+	} finally {
+		video.removeAttribute("src");
+		video.load();
+		URL.revokeObjectURL(url);
+	}
 }

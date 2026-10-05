@@ -2,13 +2,13 @@
 
 import { useEditor } from "@/editor/use-editor";
 import { buildTextElement } from "@/timeline/element-utils";
-import type { VideoElement } from "@/timeline/types";
+import type { ImageElement, VideoElement } from "@/timeline/types";
 import { roundMediaTime } from "@/wasm/media-time-rounding";
 import { FONT_SIZE_SCALE_REFERENCE } from "@/text/typography";
 
 const TICKS = 120_000;
 
-export function CenatTextTools({ clip }: { clip: VideoElement }) {
+export function CenatTextTools({ clip }: { clip: VideoElement | ImageElement }) {
 	const editor = useEditor();
 	const add = (kind: "text" | "subtitle") => {
 		const scene = editor.scenes.getActiveScene();

@@ -1,4 +1,5 @@
 import { resolveStickerId } from "@/stickers";
+import type { CenatVisualOverlay } from "@/lib/cenat-overlay-render";
 import {
 	VisualNode,
 	type ResolvedVisualSourceNodeState,
@@ -9,6 +10,9 @@ export interface StickerNodeParams extends VisualNodeParams {
 	stickerId: string;
 	intrinsicWidth?: number;
 	intrinsicHeight?: number;
+	cenatOverlay?: CenatVisualOverlay;
+	cenatSourceRate?: number;
+	cenatCanvas?: { width: number; height: number };
 }
 
 interface CachedStickerSource {

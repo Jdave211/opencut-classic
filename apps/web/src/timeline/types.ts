@@ -65,6 +65,8 @@ export interface GraphicTrack extends BaseTrack {
 	type: "graphic";
 	elements: (StickerElement | GraphicElement)[];
 	hidden: boolean;
+	/** Cenat's sticker and graphic lane. */
+	cenatGraphicLane?: number;
 }
 
 export interface EffectTrack extends BaseTrack {
@@ -167,6 +169,10 @@ export interface TextElement extends BaseTimelineElement {
 export interface StickerElement extends BaseTimelineElement {
 	type: "sticker";
 	stickerId: string;
+	/** Original source-timed visual overlay fragments for exact project saves. */
+	cenatOverlays?: { clipId: string; overlay: Record<string, unknown> }[];
+	cenatOverlayStyle?: Record<string, unknown>;
+	cenatOverlaySourceRate?: number;
 	/** Natural dimensions of the sticker asset, stored at insert time. Used by renderer and preview bounds to avoid split-brain geometry. */
 	intrinsicWidth?: number;
 	intrinsicHeight?: number;
