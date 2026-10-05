@@ -6,7 +6,7 @@ The rewrite is happening at [opencut-app/opencut](https://github.com/opencut-app
 
 ## Cenat integration fork
 
-This fork is being evaluated as a parallel editor for Cenat. The existing Cenat editor remains available while capabilities are migrated and checked end to end. See the [migration plan](docs/cenat-migration.md) for the current baseline, capability map, and acceptance gates.
+This is the primary editor opened from Cenat's home and project menu. It keeps OpenCut Classic's workspace and timeline while reading and saving Cenat projects, media, history, and Jev edits. See [Cenat editor integration](docs/cenat-editor-integration.md) for the current behavior. The [migration plan](docs/cenat-migration.md) records the earlier pilot and is no longer the product flow.
 
 ## Sponsors
 

@@ -2,7 +2,7 @@
 
 import { useEditor } from "@/editor/use-editor";
 import { buildStickerElement } from "@/timeline/element-utils";
-import type { ImageElement, VideoElement } from "@/timeline/types";
+import type { GraphicTrack, ImageElement, VideoElement } from "@/timeline/types";
 import { roundMediaTime } from "@/wasm/media-time-rounding";
 
 const TICKS = 120_000;
@@ -18,11 +18,19 @@ export function CenatGraphicTools() {
 			(element.type === "video" || element.type === "image") && !!element.cenatEdit);
 	const add = ({ kind, id }: { kind: "sticker" | "graphic"; id: string }) => {
 		const scene = editor.scenes.getActiveScene();
-		const track = scene.tracks.overlay.find((row) => row.type === "graphic" && row.cenatGraphicLane === 0);
-		if (!track) return;
 		const now = editor.playback.getCurrentTime();
 		const target = clip || scene.tracks.main.elements.find((element) => now >= element.startTime && now < element.startTime + element.duration);
 		if (!target?.cenatEdit) return;
+		let track = scene.tracks.overlay.find((row): row is GraphicTrack => row.type === "graphic" && row.cenatGraphicLane === 0);
+		if (!track) {
+			// Fresh native projects can have no overlay rows. Create Cenat's row
+			// before inserting so the visual has an editable and exportable home.
+			track = {
+				id: crypto.randomUUID(), type: "graphic", name: "Stickers & graphics",
+				hidden: false, elements: [], cenatGraphicLane: 0,
+			};
+			editor.timeline.updateTracks({ ...scene.tracks, overlay: [...scene.tracks.overlay, track] });
+		}
 		const startTime = roundMediaTime({ time: now >= target.startTime && now < target.startTime + target.duration
 			? now : target.startTime });
 		const remaining = target.startTime + target.duration - startTime;

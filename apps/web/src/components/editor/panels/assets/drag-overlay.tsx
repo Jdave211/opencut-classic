@@ -5,6 +5,7 @@ interface MediaDragOverlayProps {
 	isVisible: boolean;
 	isProcessing?: boolean;
 	progress?: number;
+	label?: string;
 	onClick?: () => void;
 }
 
@@ -12,6 +13,7 @@ export function MediaDragOverlay({
 	isVisible,
 	isProcessing = false,
 	progress = 0,
+	label,
 	onClick,
 }: MediaDragOverlayProps) {
 	if (!isVisible) return null;
@@ -42,7 +44,7 @@ export function MediaDragOverlay({
 				<p className="text-muted-foreground max-w-sm text-xs">
 					{isProcessing
 						? `Processing your files (${progress}%)`
-						: "Drag and drop videos, photos, and audio files here"}
+						: label || "Drag and drop videos, photos, and audio files here"}
 				</p>
 			</div>
 

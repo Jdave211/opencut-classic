@@ -49,6 +49,7 @@ import { MASKABLE_ELEMENT_TYPES } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { cn } from "@/utils/ui";
 import { getCenatPrimarySession } from "@/lib/cenat-primary";
+import { AddTrackCommand, BatchCommand, InsertElementCommand } from "@/commands";
 import {
 	CloudUploadIcon,
 	GridViewIcon,
@@ -60,7 +61,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 
-export function MediaView() {
+export function MediaView({ mediaType }: { mediaType?: "audio" }) {
 	const editor = useEditor();
 	const mediaFiles = useEditor((e) => e.media.getAssets());
 	const activeProject = useEditor((e) => e.project.getActive());
@@ -124,7 +125,7 @@ export function MediaView() {
 
 	const { isDragOver, dragProps, openFilePicker, fileInputProps } =
 		useFileUpload({
-			accept: "image/*,video/*,audio/*",
+			accept: mediaType === "audio" ? "audio/*" : "image/*,video/*,audio/*",
 			multiple: true,
 			onFilesSelected: (files) => processFiles({ files }),
 		});
@@ -156,7 +157,7 @@ export function MediaView() {
 	};
 
 	const filteredMediaItems = useMemo(() => {
-		const filtered = mediaFiles.filter((item) => !item.ephemeral);
+		const filtered = mediaFiles.filter((item) => !item.ephemeral && (!mediaType || item.type === mediaType));
 
 		filtered.sort((a, b) => {
 			let valueA: string | number;
@@ -189,7 +190,7 @@ export function MediaView() {
 		});
 
 		return filtered;
-	}, [mediaFiles, mediaSortBy, mediaSortOrder]);
+	}, [mediaFiles, mediaSortBy, mediaSortOrder, mediaType]);
 	const orderedMediaIds = useMemo(() => {
 		return filteredMediaItems.map((item) => item.id);
 	}, [filteredMediaItems]);
@@ -199,7 +200,7 @@ export function MediaView() {
 			<input {...fileInputProps} />
 
 			<PanelView
-				title="Assets"
+				title={mediaType === "audio" ? "Sounds" : "Assets"}
 				actions={
 					<MediaActions
 						mediaViewMode={mediaViewMode}
@@ -220,6 +221,7 @@ export function MediaView() {
 						isVisible={true}
 						isProcessing={isProcessing}
 						progress={progress}
+						label={mediaType === "audio" ? "Drop audio files here" : undefined}
 						onClick={openFilePicker}
 					/>
 				) : (
@@ -268,12 +270,9 @@ function MediaAssetDraggable({
 		startTime: MediaTime;
 	}) => {
 		const cenatSession = getCenatPrimarySession();
-		if (cenatSession && asset.type === "audio") {
-			toast.error("Add audio to a sound track.");
-			return;
-		}
-		const mainTrackId = editor.scenes.getActiveSceneOrNull()?.tracks.main.id;
-		const insertTime = cenatSession ? editor.timeline.getTotalDuration() : startTime;
+		const scene = editor.scenes.getActiveSceneOrNull();
+		const mainTrackId = scene?.tracks.main.id;
+		const insertTime = cenatSession && asset.type !== "audio" ? editor.timeline.getTotalDuration() : startTime;
 		const duration =
 			asset.duration != null
 				? mediaTimeFromSeconds({ seconds: asset.duration })
@@ -285,10 +284,22 @@ function MediaAssetDraggable({
 			duration,
 			startTime: insertTime,
 		});
-		editor.timeline.insertElement({
-			element: cenatSession ? cenatSession.decorateNewMainElement({ element, asset }) : element,
-			placement: cenatSession && mainTrackId ? { mode: "explicit", trackId: mainTrackId } : { mode: "auto" },
-		});
+		if (cenatSession && asset.type === "audio") {
+			const trackId = scene?.tracks.audio[0]?.id;
+			if (trackId) editor.timeline.insertElement({ element, placement: { mode: "explicit", trackId } });
+			else {
+				const addTrack = new AddTrackCommand({ type: "audio" });
+				editor.command.execute({ command: new BatchCommand([
+					addTrack,
+					new InsertElementCommand({ element, placement: { mode: "explicit", trackId: addTrack.getTrackId() } }),
+				]) });
+			}
+		} else {
+			editor.timeline.insertElement({
+				element: cenatSession ? cenatSession.decorateNewMainElement({ element, asset }) : element,
+				placement: cenatSession && mainTrackId ? { mode: "explicit", trackId: mainTrackId } : { mode: "auto" },
+			});
+		}
 	};
 
 	return (

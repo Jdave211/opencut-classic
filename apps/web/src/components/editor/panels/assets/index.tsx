@@ -32,7 +32,7 @@ export function AssetsPanel() {
 
 	const viewMap: Record<Tab, React.ReactNode> = cenat ? {
 		media: <MediaView />,
-		sounds: <CenatToolView section="audio" />,
+		sounds: <MediaView mediaType="audio" />,
 		text: <TextView defaultKind="text" />,
 	stickers: <CenatGraphicTools />,
 		effects: <CenatToolView section="effects" />,
