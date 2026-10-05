@@ -258,26 +258,31 @@ export class CenatPrimarySession {
 		const scene = buildDefaultScene({ name: "Main scene", isMain: true });
 		const fps = canonicalProject.fps || 30;
 		const starts = clipStarts({ clips: canonicalProject.clips, overlapIds });
-		const elements: VideoElement[] = canonicalProject.clips.map((clip) => {
+		const elements: (VideoElement | ImageElement)[] = canonicalProject.clips.map((clip) => {
 			const source = sources.find((item) => item.id === clip.assetId);
 			if (!source) throw new Error(`Source media for ${clip.id} is missing.`);
 			const speed = clip.speed || 1;
 			const duration = (clip.out - clip.in) / speed;
-			const element: VideoElement = {
-				id: clip.id, type: "video", mediaId: clip.assetId,
+			const common = {
+				id: clip.id, mediaId: clip.assetId,
 				name: clip.label || source.name,
 				startTime: ticks(starts.get(clip.id) || 0),
 				duration: roundMediaTime({ time: duration * TICKS }),
 				trimStart: roundMediaTime({ time: clip.in * TICKS }),
 				trimEnd: roundMediaTime({ time: Math.max(0, source.duration - clip.out) * TICKS }),
 				sourceDuration: roundMediaTime({ time: source.duration * TICKS }),
-				isSourceAudioEnabled: clip.volume !== 0,
-				...(speed !== 1 ? { retime: { rate: speed } } : {}),
 				hidden: false,
-				params: buildDefaultParamValues(getBuiltInElementParams({ type: "video" })),
 				cenatEdit: { clip: structuredClone(clip), sourceMediaId: clip.assetId, proxyMediaId: clip.assetId, fps, aspect: canonicalProject.aspect },
 			};
-			return element;
+			if (source.kind === "image") return {
+				...common, type: "image",
+				params: buildDefaultParamValues(getBuiltInElementParams({ type: "image" })),
+			} satisfies ImageElement;
+			return {
+				...common, type: "video", isSourceAudioEnabled: clip.volume !== 0,
+				...(speed !== 1 ? { retime: { rate: speed } } : {}),
+				params: buildDefaultParamValues(getBuiltInElementParams({ type: "video" })),
+			} satisfies VideoElement;
 		});
 		const canvasSize = aspectSize({ aspect: canonicalProject.aspect, first: sources[0] });
 		const end = Math.max(0, ...elements.map((element) => seconds(element.startTime + element.duration)));
@@ -623,29 +628,30 @@ export class CenatPrimarySession {
 	toCenatProject({ project }: { project: TProject }): CenatProject {
 		const main = project.scenes.find((scene) => scene.isMain);
 		if (!main) throw new Error("The main timeline is missing.");
-		if (main.tracks.main.elements.some((element) => element.type !== "video"))
-			throw new Error("The main Cenat sequence only accepts video clips. Place titles and other media on a track above it.");
-		const elements = main.tracks.main.elements.filter((element): element is VideoElement => element.type === "video").slice().sort((a, b) => a.startTime - b.startTime);
+		const elements = main.tracks.main.elements.slice().sort((a, b) => a.startTime - b.startTime);
 		const clips = elements.map((element) => {
 			if (!element.cenatEdit) {
 				const source = this.assets.find((asset) => asset.id === element.mediaId);
 				if (!source || source.kind === "audio") throw new Error(`The clip ${element.name} needs to be imported into Cenat first.`);
+				const speed = element.type === "video" ? element.retime?.rate || 1 : 1;
 				return {
 					id: element.id, assetId: source.id, label: element.name,
 					in: element.trimStart / TICKS,
-					out: source.duration - element.trimEnd / TICKS,
-					speed: element.retime?.rate || 1,
-					brightness: 1, volume: element.isSourceAudioEnabled ? 1 : 0,
+					out: source.kind === "image" ? (element.trimStart + element.duration * speed) / TICKS : source.duration - element.trimEnd / TICKS,
+					speed,
+					brightness: 1, volume: element.type === "video" && element.isSourceAudioEnabled ? 1 : 0,
 				};
 			}
 			const base: unknown = element.cenatEdit.clip;
 			if (!isCenatClip(base)) throw new Error(`The clip ${element.name} has invalid Cenat edit data.`);
 			const usesRenderedClip = element.mediaId === element.cenatEdit.proxyMediaId && element.cenatEdit.proxyMediaId !== element.cenatEdit.sourceMediaId;
-			const speed = usesRenderedClip ? (base.speed || 1) * (element.retime?.rate || 1) : element.retime?.rate || base.speed || 1;
+			const retime = element.type === "video" ? element.retime?.rate || 1 : 1;
+			const speed = usesRenderedClip ? (base.speed || 1) * retime : element.type === "video" ? element.retime?.rate || base.speed || 1 : base.speed || 1;
 			const source = this.assets.find((asset) => asset.id === element.cenatEdit?.sourceMediaId);
 			if (!source) throw new Error(`Source media for ${element.name} is unavailable.`);
 			const rawIn = usesRenderedClip ? base.in + element.trimStart / TICKS * (base.speed || 1) : element.trimStart / TICKS;
-			const rawOut = usesRenderedClip ? base.out - element.trimEnd / TICKS * (base.speed || 1) : source.duration - element.trimEnd / TICKS;
+			const rawOut = source.kind === "image" ? rawIn + element.duration / TICKS * speed
+				: usesRenderedClip ? base.out - element.trimEnd / TICKS * (base.speed || 1) : source.duration - element.trimEnd / TICKS;
 			const frame = 1 / (this.original.fps || 30);
 			const trimStart = Math.abs(rawIn - base.in) < frame / 4 ? base.in : rawIn;
 			const out = Math.abs(rawOut - base.out) < frame / 4 ? base.out : rawOut;

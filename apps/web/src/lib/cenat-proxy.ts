@@ -2,6 +2,20 @@
 // Cenat service on a different origin, which also works in embedded browsers.
 export const CENAT_API_ORIGIN = "/cenat";
 const MEDIA_CHUNK_BYTES = 8 * 1024 * 1024;
+const MEDIA_ATTEMPTS = 3;
+
+async function retryMediaRequest<T>(run: () => Promise<T>): Promise<T> {
+	let lastError: unknown;
+	for (let attempt = 0; attempt < MEDIA_ATTEMPTS; attempt++) {
+		try { return await run(); }
+		catch (error) {
+			lastError = error;
+			if (attempt + 1 < MEDIA_ATTEMPTS)
+				await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+		}
+	}
+	throw lastError instanceof Error ? lastError : new Error("The media transfer stopped.");
+}
 
 type ExportJob = {
 	id: string;
@@ -18,22 +32,25 @@ export async function copyLocalVideo({ url, knownBytes }: { url: string; knownBy
 	let bytes = knownBytes;
 	let contentType = "video/mp4";
 	if (!bytes) {
-		const head = await fetch(url, { method: "HEAD" });
-		if (!head.ok) throw new Error("The rendered video is unavailable.");
+		const head = await retryMediaRequest(() => fetch(url, { method: "HEAD", signal: AbortSignal.timeout(30_000) }));
+		if (!head.ok) throw new Error("The media file is unavailable.");
 		bytes = Number(head.headers.get("Content-Length"));
 		contentType = head.headers.get("Content-Type") || contentType;
 	}
 	if (!Number.isSafeInteger(bytes) || bytes <= 0)
-		throw new Error("The video size could not be verified.");
+		throw new Error("The media size could not be verified.");
 	const parts: Blob[] = [];
 	for (let start = 0; start < bytes; start += MEDIA_CHUNK_BYTES) {
 		const end = Math.min(bytes - 1, start + MEDIA_CHUNK_BYTES - 1);
-		const response = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } });
-		if (response.status !== 206 || response.headers.get("Content-Range") !== `bytes ${start}-${end}/${bytes}`)
-			throw new Error("The video server did not return the requested part.");
-		const part = await response.blob();
-		if (part.size !== end - start + 1)
-			throw new Error("A video part was incomplete.");
+		const part = await retryMediaRequest(async () => {
+			const response = await fetch(url, { headers: { Range: `bytes=${start}-${end}` }, signal: AbortSignal.timeout(30_000) });
+			if (response.status !== 206 || response.headers.get("Content-Range") !== `bytes ${start}-${end}/${bytes}`)
+				throw new Error("The media server did not return the requested part.");
+			const chunk = await response.blob();
+			if (chunk.size !== end - start + 1)
+				throw new Error("A media part was incomplete.");
+			return chunk;
+		});
 		parts.push(part);
 	}
 	return new Blob(parts, { type: contentType });

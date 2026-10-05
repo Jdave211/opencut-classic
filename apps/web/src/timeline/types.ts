@@ -125,17 +125,19 @@ interface BaseTimelineElement {
 	cenatItem?: Record<string, unknown>;
 }
 
+interface CenatClipEdit {
+	clip: Record<string, unknown>;
+	sourceMediaId: string;
+	proxyMediaId: string;
+	fps: number;
+	aspect: string;
+}
+
 export interface VideoElement extends BaseTimelineElement {
 	type: "video";
 	mediaId: string;
 	/** Original Cenat edit and source media retained when this clip uses a rendered proxy. */
-	cenatEdit?: {
-		clip: Record<string, unknown>;
-		sourceMediaId: string;
-		proxyMediaId: string;
-		fps: number;
-		aspect: string;
-	};
+	cenatEdit?: CenatClipEdit;
 	isSourceAudioEnabled?: boolean;
 	hidden?: boolean;
 	retime?: RetimeConfig;
@@ -146,6 +148,7 @@ export interface VideoElement extends BaseTimelineElement {
 export interface ImageElement extends BaseTimelineElement {
 	type: "image";
 	mediaId: string;
+	cenatEdit?: CenatClipEdit;
 	hidden?: boolean;
 	effects?: Effect[];
 	masks?: Mask[];
