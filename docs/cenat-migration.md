@@ -15,6 +15,8 @@ This fork runs alongside the existing Cenat editor. The existing editor and its 
 
 Cenat's existing home, project menu, library, folders, account surface, and project creation flow remain the product entry point. Classic's `/projects` page is only a standalone fork test surface. The eventual product route will open a migrated project in Classic's editor from Cenat's existing home; this work must not replace Cenat's home with Classic's projects page.
 
+In local development, Cenat at `localhost:5173` now lands on that home even when an older editor session was open. A blank timeline starts a fresh project in the fork at `localhost:3000/new`, and Exit project returns to Cenat home. Opening an existing Cenat project shows a compatibility stop first; the user can continue in the current editor or try a separate blank Classic project. This is a development bridge, not a completed account migration. The fork stores projects in the browser profile that opened it, so the pilot imported in Codex's browser does not appear automatically in Dia or Chrome. The Cenat source record is never overwritten by this navigation.
+
 ## First local project pilot
 
 - A real five-clip Cenat project JSON from the local project review artifacts was analyzed before any Classic project was created. The report found five linked media files, no blockers, and explicit 30 fps and frame-rounding warnings.

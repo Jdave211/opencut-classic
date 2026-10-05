@@ -58,12 +58,17 @@ function ProjectDropdown() {
 
 		try {
 			await editor.project.prepareExit();
-			editor.project.closeProject();
 		} catch (error) {
 			console.error("Failed to prepare project exit:", error);
 		} finally {
-			editor.project.closeProject();
-			router.push("/projects");
+			const returnTo = sessionStorage.getItem("cenat.returnTo");
+			if (returnTo) {
+				sessionStorage.removeItem("cenat.returnTo");
+				window.location.assign(returnTo);
+			} else {
+				editor.project.closeProject();
+				router.push("/projects");
+			}
 		}
 	};
 
