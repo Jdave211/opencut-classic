@@ -14,6 +14,8 @@ export interface Bookmark {
 	note?: string;
 	color?: string;
 	duration?: MediaTime;
+	/** Original Cenat sequence marker for lossless round-trip. */
+	cenatMarker?: Record<string, unknown>;
 }
 
 export interface TScene {
@@ -38,6 +40,8 @@ export interface VideoTrack extends BaseTrack {
 	elements: (VideoElement | ImageElement)[];
 	muted: boolean;
 	hidden: boolean;
+	/** Cenat's source track, retained while editing its timeline in OpenCut. */
+	cenatTrack?: Record<string, unknown>;
 }
 
 export interface TextTrack extends BaseTrack {
@@ -50,6 +54,8 @@ export interface AudioTrack extends BaseTrack {
 	type: "audio";
 	elements: AudioElement[];
 	muted: boolean;
+	/** Cenat's source track, retained while editing its timeline in OpenCut. */
+	cenatTrack?: Record<string, unknown>;
 }
 
 export interface GraphicTrack extends BaseTrack {
@@ -112,6 +118,8 @@ interface BaseTimelineElement {
 	sourceDuration?: MediaTime;
 	animations?: ElementAnimations;
 	params: ParamValues;
+	/** Cenat's source item, retained while editing its timeline in OpenCut. */
+	cenatItem?: Record<string, unknown>;
 }
 
 export interface VideoElement extends BaseTimelineElement {

@@ -1,4 +1,4 @@
-import type { SceneTracks, TimelineTrack } from "@/timeline";
+import type { SceneTracks, TimelineTrack, VideoElement, ImageElement } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { RootNode } from "./nodes/root-node";
 import { VideoNode } from "./nodes/video-node";
@@ -17,8 +17,29 @@ import {
 	readBlendModeFromParams,
 	readOpacityFromParams,
 } from "@/rendering";
+import type { BlendMode } from "@/rendering";
+import type { VisualNodeParams } from "./nodes/visual-node";
 
 const PREVIEW_MAX_IMAGE_SIZE = 2048;
+
+function cenatVisual({ element }: { element: VideoElement | ImageElement }): VisualNodeParams["cenatVisual"] {
+	const item = element.cenatItem;
+	if (!item) return undefined;
+	return {
+		fit: item.fit === "cover" ? "cover" : "contain",
+		fadeIn: typeof item.fadeIn === "number" ? item.fadeIn : 0,
+		fadeOut: typeof item.fadeOut === "number" ? item.fadeOut : 0,
+	};
+}
+
+function cenatBlend({ element }: { element: VideoElement | ImageElement }): BlendMode | null {
+	const mode = element.cenatItem?.blendMode;
+	if (mode === "hardlight") return "hard-light";
+	if (mode === "softlight") return "soft-light";
+	if (mode === "normal" || mode === "multiply" || mode === "screen" || mode === "overlay" ||
+		mode === "darken" || mode === "lighten" || mode === "difference") return mode;
+	return null;
+}
 
 function getVisibleSortedElements({ track }: { track: TimelineTrack }) {
 	return track.elements
@@ -79,7 +100,8 @@ function buildTrackNodes({
 							transform: buildTransformFromParams({ params: element.params }),
 							animations: element.animations,
 							opacity: readOpacityFromParams({ params: element.params }),
-							blendMode: readBlendModeFromParams({ params: element.params }),
+							blendMode: cenatBlend({ element }) || readBlendModeFromParams({ params: element.params }),
+							cenatVisual: cenatVisual({ element }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
 						}),
@@ -96,7 +118,8 @@ function buildTrackNodes({
 							transform: buildTransformFromParams({ params: element.params }),
 							animations: element.animations,
 							opacity: readOpacityFromParams({ params: element.params }),
-							blendMode: readBlendModeFromParams({ params: element.params }),
+							blendMode: cenatBlend({ element }) || readBlendModeFromParams({ params: element.params }),
+							cenatVisual: cenatVisual({ element }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
 							...(isPreview && {

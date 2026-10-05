@@ -29,6 +29,17 @@ import { SpeedTab } from "@/speed/components/speed-tab";
 import { GraphicTab } from "@/graphics/components/graphic-tab";
 import { OcShapesIcon } from "@/components/icons";
 import { CenatEditsTab } from "./components/cenat-edits-tab";
+import { CenatTrackTab } from "./components/cenat-track-tab";
+
+function buildCenatTrackTab({ element }: { element: AudioElement | ImageElement | VideoElement }): PropertiesTabDef {
+	return {
+		id: "layer",
+		label: element.type === "audio" ? "Mix" : "Layer",
+		icon: <HugeiconsIcon icon={MusicNote03Icon} size={16} />,
+		content: ({ trackId }) => <CenatTrackTab key={`${element.id}:${JSON.stringify(element.cenatItem)}`}
+			element={element} trackId={trackId} />,
+	};
+}
 
 const TRANSFORM_PARAM_KEYS = [
 	"transform.positionX",
@@ -263,6 +274,13 @@ function getVideoConfig({
 			],
 		};
 	}
+	if (element.cenatItem) {
+		return {
+			defaultTab: "transform",
+			tabs: [buildTransformTab({ element }), buildCenatTrackTab({ element }),
+				...(showAudioTab ? [buildAudioTab({ element })] : []), buildSpeedTab({ element })],
+		};
+	}
 	return {
 		defaultTab: "transform",
 		tabs: [
@@ -283,7 +301,7 @@ function getImageConfig({
 }): ElementPropertiesConfig {
 	return {
 		defaultTab: "transform",
-		tabs: [
+		tabs: element.cenatItem ? [buildTransformTab({ element }), buildCenatTrackTab({ element })] : [
 			buildTransformTab({ element }),
 			buildBlendingTab({ element }),
 			buildMasksTab({ element }),
@@ -331,7 +349,7 @@ function getAudioConfig({
 }): ElementPropertiesConfig {
 	return {
 		defaultTab: "audio",
-		tabs: [buildAudioTab({ element }), buildSpeedTab({ element })],
+		tabs: [buildAudioTab({ element }), ...(element.cenatItem ? [buildCenatTrackTab({ element })] : []), buildSpeedTab({ element })],
 	};
 }
 

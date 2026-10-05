@@ -240,20 +240,42 @@ async function collectVisualSourceNode({
 			: (node.resolved as ResolvedVisualSourceNodeState).sourceHeight;
 
 	const textureId = `${path}:source`;
-	textures.set(textureId, {
-		kind: "external",
-		id: textureId,
-		source,
-		width: sourceWidth,
-		height: sourceHeight,
-	});
-
 	const transform = computeVisualTransform({
 		renderer,
 		resolved: node.resolved,
 		sourceWidth,
 		sourceHeight,
 	});
+	const cenat = (node instanceof VideoNode || node instanceof ImageNode)
+		? node.params.cenatVisual : undefined;
+	if (cenat) {
+		const width = Math.max(1, Math.min(4096, Math.round(transform.width)));
+		const height = Math.max(1, Math.min(4096, Math.round(transform.height)));
+		textures.set(textureId, {
+			kind: "rendered",
+			id: textureId,
+			contentHash: `cenat:${identityKey(source)}:${node.resolved.localTime}:${cenat.fit}:${width}x${height}`,
+			width,
+			height,
+			draw: (ctx) => {
+				ctx.clearRect(0, 0, width, height);
+				const scale = cenat.fit === "cover"
+					? Math.max(width / sourceWidth, height / sourceHeight)
+					: Math.min(width / sourceWidth, height / sourceHeight);
+				const drawnWidth = sourceWidth * scale;
+				const drawnHeight = sourceHeight * scale;
+				ctx.drawImage(source, (width - drawnWidth) / 2, (height - drawnHeight) / 2, drawnWidth, drawnHeight);
+			},
+		});
+	} else {
+		textures.set(textureId, {
+			kind: "external",
+			id: textureId,
+			source,
+			width: sourceWidth,
+			height: sourceHeight,
+		});
+	}
 	const { mask, strokeLayer } = buildMaskArtifacts({
 		node,
 		renderer,
@@ -266,7 +288,9 @@ async function collectVisualSourceNode({
 		type: "layer",
 		textureId,
 		transform,
-		opacity: node.resolved.opacity,
+		opacity: node.resolved.opacity * (cenat ? Math.min(1,
+			cenat.fadeIn > 0 ? node.resolved.localTime / (cenat.fadeIn * 120_000) : 1,
+			cenat.fadeOut > 0 ? (node.params.duration - node.resolved.localTime) / (cenat.fadeOut * 120_000) : 1) : 1),
 		blendMode: node.params.blendMode ?? "normal",
 		effectPassGroups: node.resolved.effectPasses,
 		mask,

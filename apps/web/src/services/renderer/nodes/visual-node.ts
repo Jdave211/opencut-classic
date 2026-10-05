@@ -16,6 +16,8 @@ export interface VisualNodeParams {
 	blendMode?: BlendMode;
 	effects?: Effect[];
 	masks?: Mask[];
+	/** Cenat overlay framing and fades, applied only to imported track items. */
+	cenatVisual?: { fit: "cover" | "contain"; fadeIn: number; fadeOut: number };
 }
 
 export interface ResolvedVisualNodeState {

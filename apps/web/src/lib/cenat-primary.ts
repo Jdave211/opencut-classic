@@ -1,9 +1,10 @@
 import type { MediaAsset } from "@/media/types";
 import type { TProject } from "@/project/types";
-import type { VideoElement } from "@/timeline/types";
+import type { AudioElement, AudioTrack, ImageElement, OverlayTrack, TimelineElement, VideoElement, VideoTrack } from "@/timeline/types";
 import { buildDefaultScene } from "@/timeline/scenes";
 import { buildDefaultParamValues, getBuiltInElementParams } from "@/params/registry";
 import { roundMediaTime } from "@/wasm/media-time-rounding";
+import type { MediaTime } from "@/wasm";
 import { CURRENT_PROJECT_VERSION } from "@/services/storage/migrations";
 import type { EditorCore } from "@/core";
 import { renderCenatClip } from "@/lib/cenat-proxy";
@@ -17,7 +18,15 @@ type CenatClip = {
 	speed: number; brightness: number; volume: number;
 	[key: string]: unknown;
 };
-type CenatProject = { name: string; aspect: string; fps?: number; clips: CenatClip[]; [key: string]: unknown };
+type CenatItem = {
+	id: string; assetId: string; in: number; out: number; speed: number; at: number;
+	volume: number; x: number; y: number; width: number; height: number;
+	opacity: number; fit: "cover" | "contain"; fadeIn: number; fadeOut: number;
+	ducking: boolean; anchorClipId?: string; [key: string]: unknown;
+};
+type CenatTrack = { id: string; name: string; kind: "video" | "audio"; muted: boolean; items: CenatItem[]; gain?: number; locked?: boolean; [key: string]: unknown };
+type CenatMarker = { id: string; at: number; end?: number; label: string; color: string; note?: string; [key: string]: unknown };
+type CenatProject = { name: string; aspect: string; fps?: number; clips: CenatClip[]; tracks?: CenatTrack[]; markers?: CenatMarker[]; [key: string]: unknown };
 type CenatAsset = {
 	id: string; name: string; url: string; thumbnail?: string;
 	duration: number; width: number; height: number; hasAudio: boolean; kind?: string;
@@ -33,6 +42,21 @@ function isCenatClip(value: unknown): value is CenatClip {
 		"speed" in value && typeof value.speed === "number" &&
 		"brightness" in value && typeof value.brightness === "number" &&
 		"volume" in value && typeof value.volume === "number";
+}
+function isCenatItem(value: unknown): value is CenatItem {
+	return !!value && typeof value === "object" &&
+		"id" in value && typeof value.id === "string" &&
+		"assetId" in value && typeof value.assetId === "string" &&
+		"in" in value && typeof value.in === "number" &&
+		"out" in value && typeof value.out === "number" &&
+		"at" in value && typeof value.at === "number";
+}
+function isCenatMarker(value: unknown): value is CenatMarker {
+	return !!value && typeof value === "object" &&
+		"id" in value && typeof value.id === "string" &&
+		"at" in value && typeof value.at === "number" &&
+		"label" in value && typeof value.label === "string" &&
+		"color" in value && typeof value.color === "string";
 }
 
 let active: CenatPrimarySession | null = null;
@@ -78,22 +102,55 @@ function aspectSize({ aspect, first }: { aspect: string; first: CenatAsset | und
 	return { width: 1920, height: 1080 };
 }
 
+function seconds(time: number): number { return time / TICKS; }
+function ticks(time: number): MediaTime { return roundMediaTime({ time: time * TICKS }); }
+function clipStarts({ clips, overlapIds }: { clips: CenatClip[]; overlapIds: Set<string> }): Map<string, number> {
+	const starts = new Map<string, number>();
+	let position = 0;
+	for (const [index, clip] of clips.entries()) {
+		const previous = clips[index - 1];
+		const transition = clip.transition;
+		if (previous && transition && typeof transition === "object" &&
+			"type" in transition && typeof transition.type === "string" &&
+			"duration" in transition && typeof transition.duration === "number" &&
+			overlapIds.has(transition.type)) {
+			position -= Math.max(0, Math.min(transition.duration,
+				(previous.out - previous.in) / (previous.speed || 1) / 2,
+				(clip.out - clip.in) / (clip.speed || 1) / 2));
+		}
+		starts.set(clip.id, position);
+		position += (clip.out - clip.in) / (clip.speed || 1);
+	}
+	return starts;
+}
+function itemStart({ item, starts }: { item: CenatItem; starts: Map<string, number> }): number {
+	return item.at + (item.anchorClipId ? starts.get(item.anchorClipId) || 0 : 0);
+}
+function volumeDb(gain: number): number { return gain <= 0 ? -60 : 20 * Math.log10(gain); }
+function volumeGain(db: number): number { return db <= -60 ? 0 : Math.pow(10, db / 20); }
+function paramNumber({ element, key, fallback }: { element: TimelineElement; key: string; fallback: number }): number {
+	const value = element.params[key];
+	return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
 export function getCenatPrimarySession(): CenatPrimarySession | null { return active; }
 
 export class CenatPrimarySession {
 	private revision: string;
 	private original: CenatProject;
 	private assets: CenatAsset[];
+	private overlapIds: Set<string>;
 	private saveQueue: Promise<void> = Promise.resolve();
 	private previewing = new Set<string>();
 	private unbindSelection: (() => void) | null = null;
 	readonly id: string;
 
-	private constructor({ id, project, assets, revision }: { id: string; project: CenatProject; assets: CenatAsset[]; revision: string }) {
+	private constructor({ id, project, assets, revision, overlapIds }: { id: string; project: CenatProject; assets: CenatAsset[]; revision: string; overlapIds: Set<string> }) {
 		this.id = id;
 		this.original = project;
 		this.assets = assets;
 		this.revision = revision;
+		this.overlapIds = overlapIds;
 	}
 
 	static async open({ id, onProgress }: { id: string; onProgress?: (message: string) => void }): Promise<{ session: CenatPrimarySession; project: TProject; media: MediaAsset[] }> {
@@ -101,8 +158,15 @@ export class CenatPrimarySession {
 		if (!reply.project || !reply.assets || !reply.revision) throw new Error("Cenat sent an incomplete project.");
 		const canonicalProject = reply.project;
 		const canonicalAssets = reply.assets;
-		const session = new CenatPrimarySession({ id, project: canonicalProject, assets: canonicalAssets, revision: reply.revision });
-		const referenced = new Set(canonicalProject.clips.map((clip) => clip.assetId));
+		const catalogResponse = await fetch(`${API}/api/editor/catalog`);
+		if (!catalogResponse.ok) throw new Error("Could not load Cenat transition timing.");
+		const catalog: { transitions: { id: string; overlap: boolean }[] } = await catalogResponse.json();
+		const overlapIds = new Set(catalog.transitions.filter((entry) => entry.overlap).map((entry) => entry.id));
+		const session = new CenatPrimarySession({ id, project: canonicalProject, assets: canonicalAssets, revision: reply.revision, overlapIds });
+		const referenced = new Set([
+			...canonicalProject.clips.map((clip) => clip.assetId),
+			...(canonicalProject.tracks || []).flatMap((track) => track.items.map((item) => item.assetId)),
+		]);
 		const sources = canonicalAssets.filter((asset) => referenced.has(asset.id));
 		const media: MediaAsset[] = [];
 		for (const [index, source] of sources.entries()) {
@@ -121,7 +185,7 @@ export class CenatPrimarySession {
 		}
 		const scene = buildDefaultScene({ name: "Main scene", isMain: true });
 		const fps = canonicalProject.fps || 30;
-		let start = 0;
+		const starts = clipStarts({ clips: canonicalProject.clips, overlapIds });
 		const elements: VideoElement[] = canonicalProject.clips.map((clip) => {
 			const source = sources.find((item) => item.id === clip.assetId);
 			if (!source) throw new Error(`Source media for ${clip.id} is missing.`);
@@ -130,7 +194,7 @@ export class CenatPrimarySession {
 			const element: VideoElement = {
 				id: clip.id, type: "video", mediaId: clip.assetId,
 				name: clip.label || source.name,
-				startTime: roundMediaTime({ time: start * TICKS }),
+				startTime: ticks(starts.get(clip.id) || 0),
 				duration: roundMediaTime({ time: duration * TICKS }),
 				trimStart: roundMediaTime({ time: clip.in * TICKS }),
 				trimEnd: roundMediaTime({ time: Math.max(0, source.duration - clip.out) * TICKS }),
@@ -141,14 +205,76 @@ export class CenatPrimarySession {
 				params: buildDefaultParamValues(getBuiltInElementParams({ type: "video" })),
 				cenatEdit: { clip: structuredClone(clip), sourceMediaId: clip.assetId, proxyMediaId: clip.assetId, fps, aspect: canonicalProject.aspect },
 			};
-			start += duration;
 			return element;
 		});
 		const canvasSize = aspectSize({ aspect: canonicalProject.aspect, first: sources[0] });
+		const end = Math.max(0, ...elements.map((element) => seconds(element.startTime + element.duration)));
+		const overlay: OverlayTrack[] = [];
+		const audio: AudioTrack[] = [];
+		for (const track of canonicalProject.tracks || []) {
+			if (track.kind === "audio") {
+				const nativeTrack: AudioTrack = {
+					id: track.id, name: track.name, type: "audio", muted: track.muted,
+					cenatTrack: structuredClone(track), elements: [],
+				};
+				for (const item of track.items) {
+					const source = sources.find((candidate) => candidate.id === item.assetId);
+					if (!source) throw new Error(`Source media for ${item.id} is missing.`);
+					const element: AudioElement = {
+						id: item.id, type: "audio", sourceType: "upload", mediaId: item.assetId,
+						name: source.name, startTime: ticks(itemStart({ item, starts })),
+						duration: ticks((item.out - item.in) / (item.speed || 1)),
+						trimStart: ticks(item.in), trimEnd: ticks(Math.max(0, source.duration - item.out)),
+						sourceDuration: ticks(source.duration),
+						...(item.speed !== 1 ? { retime: { rate: item.speed } } : {}),
+						params: { ...buildDefaultParamValues(getBuiltInElementParams({ type: "audio" })), volume: volumeDb(item.volume * (track.gain ?? 1)) },
+						cenatItem: structuredClone(item),
+					};
+					nativeTrack.elements.push(element);
+				}
+				audio.push(nativeTrack);
+				continue;
+			}
+			const nativeTrack: VideoTrack = {
+				id: track.id, name: track.name, type: "video", muted: track.muted,
+				hidden: track.muted, cenatTrack: structuredClone(track), elements: [],
+			};
+			for (const item of track.items) {
+				const source = sources.find((candidate) => candidate.id === item.assetId);
+				if (!source) throw new Error(`Source media for ${item.id} is missing.`);
+				const sourceScale = Math.min(canvasSize.width / source.width, canvasSize.height / source.height);
+				const params = {
+					...buildDefaultParamValues(getBuiltInElementParams({ type: source.kind === "image" ? "image" : "video" })),
+					"transform.positionX": (item.x - 0.5) * canvasSize.width,
+					"transform.positionY": (item.y - 0.5) * canvasSize.height,
+					"transform.scaleX": item.width * canvasSize.width / (source.width * sourceScale),
+					"transform.scaleY": item.height * canvasSize.height / (source.height * sourceScale),
+					opacity: item.opacity,
+					...(source.kind === "image" ? {} : { volume: volumeDb(item.volume) }),
+				};
+				const base = {
+					id: item.id, mediaId: item.assetId, name: source.name,
+					startTime: ticks(itemStart({ item, starts })), duration: ticks((item.out - item.in) / (item.speed || 1)),
+					trimStart: ticks(item.in), trimEnd: ticks(Math.max(0, source.duration - item.out)),
+					sourceDuration: ticks(source.duration), hidden: false, params,
+					cenatItem: structuredClone(item),
+				};
+				if (source.kind === "image") nativeTrack.elements.push({ ...base, type: "image" } satisfies ImageElement);
+				else nativeTrack.elements.push({ ...base, type: "video", isSourceAudioEnabled: item.volume > 0,
+					...(item.speed !== 1 ? { retime: { rate: item.speed } } : {}) } satisfies VideoElement);
+			}
+			overlay.push(nativeTrack);
+		}
 		const now = new Date();
 		const project: TProject = {
-			metadata: { id, name: canonicalProject.name, duration: roundMediaTime({ time: start * TICKS }), createdAt: now, updatedAt: now },
-			scenes: [{ ...scene, tracks: { ...scene.tracks, main: { ...scene.tracks.main, elements } } }],
+			metadata: { id, name: canonicalProject.name, duration: ticks(end), createdAt: now, updatedAt: now },
+			scenes: [{ ...scene,
+				bookmarks: (canonicalProject.markers || []).map((marker) => ({
+					time: ticks(marker.at), note: marker.label, color: marker.color,
+					...(marker.end !== undefined ? { duration: ticks(marker.end - marker.at) } : {}),
+					cenatMarker: structuredClone(marker),
+				})),
+				tracks: { ...scene.tracks, main: { ...scene.tracks.main, elements }, overlay, audio } }],
 			currentSceneId: scene.id,
 			settings: { fps: { numerator: fps, denominator: 1 }, canvasSize, canvasSizeMode: "custom", lastCustomCanvasSize: null, originalCanvasSize: null, background: { type: "color", color: "#000000" } },
 			version: CURRENT_PROJECT_VERSION,
@@ -248,10 +374,8 @@ export class CenatPrimarySession {
 	toCenatProject({ project }: { project: TProject }): CenatProject {
 		const main = project.scenes.find((scene) => scene.isMain);
 		if (!main) throw new Error("The main timeline is missing.");
-		if (main.tracks.overlay.some((track) => track.elements.length > 0) ||
-			main.tracks.audio.some((track) => track.elements.length > 0) ||
-			main.tracks.main.elements.some((element) => element.type !== "video"))
-			throw new Error("This timeline contains an edit that Cenat cannot save yet. Remove it before leaving or exporting.");
+		if (main.tracks.main.elements.some((element) => element.type !== "video"))
+			throw new Error("The main Cenat sequence only accepts video clips. Place titles and other media on a track above it.");
 		const elements = main.tracks.main.elements.filter((element): element is VideoElement => element.type === "video").slice().sort((a, b) => a.startTime - b.startTime);
 		const clips = elements.map((element) => {
 			if (!element.cenatEdit) {
@@ -276,9 +400,115 @@ export class CenatPrimarySession {
 			const frame = 1 / (this.original.fps || 30);
 			const trimStart = Math.abs(rawIn - base.in) < frame / 4 ? base.in : rawIn;
 			const out = Math.abs(rawOut - base.out) < frame / 4 ? base.out : rawOut;
-			return { ...base, id: element.id, assetId: source.id, label: element.name, in: trimStart, out, speed };
+			return { ...base, id: element.id, assetId: source.id,
+				...(element.name !== (base.label || source.name) ? { label: element.name } : {}),
+				in: trimStart, out, speed };
 		});
-		return { ...this.original, name: project.metadata.name, clips };
+		const starts = clipStarts({ clips, overlapIds: this.overlapIds });
+		const canvas = project.settings.canvasSize;
+		const tracks: CenatTrack[] = [];
+		for (const track of [...main.tracks.overlay, ...main.tracks.audio]) {
+			if (track.type !== "video" && track.type !== "audio") {
+				if (track.elements.length) throw new Error(`${track.name} contains an OpenCut layer that cannot be saved to Cenat. Add text through the clip's Text controls for now.`);
+				continue;
+			}
+			const oldTrack = this.original.tracks?.find((candidate) => candidate.id === track.id);
+			const kind = track.type === "audio" ? "audio" : "video";
+			const items: CenatItem[] = [];
+			for (const element of track.elements) {
+				if (kind === "audio" && (element.type !== "audio" || element.sourceType !== "upload"))
+					throw new Error(`Import ${element.name} into Cenat before saving this audio track.`);
+				if (kind === "video" && element.type !== "video" && element.type !== "image")
+					throw new Error(`${element.name} cannot be saved on a Cenat video track.`);
+				const mediaId = "mediaId" in element ? element.mediaId : null;
+				const source = this.assets.find((candidate) => candidate.id === mediaId);
+				if (!source) throw new Error(`Source media for ${element.name} is unavailable.`);
+				const oldItem = oldTrack?.items.find((candidate) => candidate.id === element.id);
+				const speed = "retime" in element ? element.retime?.rate || 1 : oldItem?.speed || 1;
+				const start = seconds(element.startTime);
+				const sourceIn = seconds(element.trimStart);
+				const sourceOut = source.kind === "image"
+					? sourceIn + seconds(element.duration) * speed
+					: source.duration - seconds(element.trimEnd);
+				const inPoint = oldItem && Math.abs(sourceIn - oldItem.in) < 1 / (this.original.fps || 30) / 4 ? oldItem.in : sourceIn;
+				const unchangedDuration = oldItem &&
+					Math.abs(sourceIn - oldItem.in) < 1 / (this.original.fps || 30) / 4 &&
+					Math.abs(seconds(element.duration) - (oldItem.out - oldItem.in) / (oldItem.speed || 1)) < 1 / (this.original.fps || 30) / 4;
+				const outPoint = oldItem && (unchangedDuration || Math.abs(sourceOut - oldItem.out) < 1 / (this.original.fps || 30) / 4) ? oldItem.out : sourceOut;
+				const anchorStart = oldItem?.anchorClipId ? starts.get(oldItem.anchorClipId) : undefined;
+				const keepAnchor = anchorStart !== undefined && oldItem !== undefined &&
+					Math.abs(start - (anchorStart + oldItem.at)) < 1 / (this.original.fps || 30) / 4;
+				const at = keepAnchor ? start - anchorStart : start;
+				const editedItem = element.cenatItem;
+				const base: CenatItem = isCenatItem(editedItem)
+					? structuredClone(editedItem) : oldItem ? structuredClone(oldItem) : {
+					id: element.id, assetId: source.id, in: inPoint, out: outPoint, speed,
+					at, volume: 1, x: 0, y: 0, width: 1, height: 1, opacity: 1,
+					fit: "contain", fadeIn: 0, fadeOut: 0, ducking: false,
+				};
+				base.assetId = source.id;
+				base.in = inPoint;
+				base.out = outPoint;
+				base.speed = speed;
+				base.at = at;
+				if (!keepAnchor) delete base.anchorClipId;
+				if (kind === "audio") {
+					const expected = volumeDb((oldItem?.volume ?? 1) * (oldTrack?.gain ?? 1));
+					const actual = paramNumber({ element, key: "volume", fallback: 0 });
+					if (!oldItem || Math.abs(actual - expected) > 0.001)
+						base.volume = Math.min(2, volumeGain(actual) / (oldTrack?.gain || 1));
+				} else {
+					const naturalScale = Math.min(canvas.width / source.width, canvas.height / source.height);
+					const x = paramNumber({ element, key: "transform.positionX", fallback: 0 });
+					const y = paramNumber({ element, key: "transform.positionY", fallback: 0 });
+					const scaleX = paramNumber({ element, key: "transform.scaleX", fallback: 1 });
+					const scaleY = paramNumber({ element, key: "transform.scaleY", fallback: 1 });
+					const width = Math.max(0.05, Math.min(1, scaleX * source.width * naturalScale / canvas.width));
+					const height = Math.max(0.05, Math.min(1, scaleY * source.height * naturalScale / canvas.height));
+					const boxX = Math.max(0, Math.min(1, 0.5 + x / canvas.width));
+					const boxY = Math.max(0, Math.min(1, 0.5 + y / canvas.height));
+					if (!oldItem || Math.abs(boxX - oldItem.x) > 1e-4 || Math.abs(boxY - oldItem.y) > 1e-4 ||
+						Math.abs(width - oldItem.width) > 1e-4 || Math.abs(height - oldItem.height) > 1e-4) {
+						base.x = boxX; base.y = boxY; base.width = width; base.height = height;
+					}
+					const opacity = paramNumber({ element, key: "opacity", fallback: 1 });
+					if (!oldItem || Math.abs(opacity - oldItem.opacity) > 1e-4) base.opacity = opacity;
+					if (element.type === "video") {
+						const actual = paramNumber({ element, key: "volume", fallback: 0 });
+						if (!oldItem || Math.abs(actual - volumeDb(oldItem.volume)) > 0.001)
+							base.volume = element.isSourceAudioEnabled === false ? 0 : Math.min(2, volumeGain(actual));
+					}
+				}
+				items.push(base);
+			}
+			tracks.push({ ...(oldTrack || {}), id: track.id, name: track.name, kind,
+				muted: track.type === "audio" ? track.muted : track.muted || track.hidden, items });
+		}
+		const originalOrder = new Map((this.original.tracks || []).map((track, index) => [track.id, index]));
+		tracks.sort((a, b) => (originalOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (originalOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+		const unclaimedMarkers = [...(this.original.markers || [])];
+		const markers: CenatMarker[] = main.bookmarks.map((bookmark) => {
+			const original = isCenatMarker(bookmark.cenatMarker) ? bookmark.cenatMarker
+				: unclaimedMarkers.find((candidate) => ticks(candidate.at) === bookmark.time &&
+					candidate.label === bookmark.note && candidate.color === bookmark.color)
+					|| (unclaimedMarkers.length === 1 && main.bookmarks.length === 1 ? unclaimedMarkers[0] : undefined);
+			if (original) {
+				const index = unclaimedMarkers.findIndex((candidate) => candidate.id === original.id);
+				if (index >= 0) unclaimedMarkers.splice(index, 1);
+			}
+			if (original && ticks(original.at) === bookmark.time && bookmark.note === original.label &&
+				bookmark.color === original.color &&
+				(bookmark.duration ?? 0) === (original.end === undefined ? 0 : ticks(original.end - original.at)))
+				return structuredClone(original);
+			const at = seconds(bookmark.time);
+			return { ...(original || {}), id: original?.id || crypto.randomUUID(), at,
+				label: bookmark.note || original?.label || "Marker", color: bookmark.color || original?.color || "#f5c542",
+				...(bookmark.duration !== undefined ? { end: at + seconds(bookmark.duration) } : { end: undefined }) };
+		});
+		const candidate = { ...this.original, name: project.metadata.name, clips,
+			...(this.original.tracks || tracks.length ? { tracks } : {}),
+			...(this.original.markers || markers.length ? { markers } : {}) };
+		return JSON.stringify(candidate) === JSON.stringify(this.original) ? this.original : candidate;
 	}
 
 	async save({ project }: { project: TProject }): Promise<void> {
