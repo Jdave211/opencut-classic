@@ -37,7 +37,7 @@ type CenatItem = {
 };
 type CenatTrack = { id: string; name: string; kind: "video" | "audio"; muted: boolean; items: CenatItem[]; gain?: number; locked?: boolean; [key: string]: unknown };
 type CenatMarker = { id: string; at: number; end?: number; label: string; color: string; note?: string; [key: string]: unknown };
-type CenatProject = { name: string; aspect: string; fps?: number; clips: CenatClip[]; tracks?: CenatTrack[]; markers?: CenatMarker[]; textLanes?: { title?: number; caption?: number; graphic?: number }; [key: string]: unknown };
+type CenatProject = { name: string; aspect: string; fps?: number; canvas?: { width?: number; height?: number; fit?: string; background?: string; [key: string]: unknown }; clips: CenatClip[]; tracks?: CenatTrack[]; markers?: CenatMarker[]; textLanes?: { title?: number; caption?: number; graphic?: number }; [key: string]: unknown };
 type CenatAsset = {
 	id: string; name: string; url: string; thumbnail?: string;
 	duration: number; width: number; height: number; hasAudio: boolean; kind?: string;
@@ -132,11 +132,26 @@ function request({ projectId, type, data = {}, timeoutMs = 20_000 }: { projectId
 	});
 }
 
-function aspectSize({ aspect, first }: { aspect: string; first: CenatAsset | undefined }) {
-	if (aspect === "9:16") return { width: 1080, height: 1920 };
-	if (aspect === "1:1") return { width: 1080, height: 1080 };
-	if (aspect === "source" && first) return { width: first.width, height: first.height };
-	return { width: 1920, height: 1080 };
+const CANVAS_ASPECTS = ["16:9", "9:16", "1:1", "4:5", "4:3", "3:4", "3:2", "2:3", "5:4", "21:9"] as const;
+function aspectSize({ aspect, first, canvas }: { aspect: string; first: CenatAsset | undefined; canvas?: CenatProject["canvas"] }) {
+	if (aspect === "source" && first?.width && first?.height) return { width: first.width, height: first.height };
+	if (aspect === "custom" && canvas?.width && canvas?.height) return { width: canvas.width, height: canvas.height };
+	const [w, h] = aspect.split(":").map(Number);
+	if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return { width: 1920, height: 1080 };
+	const shortEdge = 1080;
+	return w >= h
+		? { width: Math.round(shortEdge * w / h / 2) * 2, height: shortEdge }
+		: { width: shortEdge, height: Math.round(shortEdge * h / w / 2) * 2 };
+}
+function aspectForCanvas({ size, original, first }: { size: { width: number; height: number }; original: CenatProject; first?: CenatAsset }): string {
+	const expected = aspectSize({ aspect: original.aspect, first, canvas: original.canvas });
+	if (Math.abs(size.width - expected.width) < 1 && Math.abs(size.height - expected.height) < 1) return original.aspect;
+	const ratio = size.width / size.height;
+	const known = CANVAS_ASPECTS.find((aspect) => {
+		const [w, h] = aspect.split(":").map(Number);
+		return Math.abs(ratio - w / h) < 0.001;
+	});
+	return known || "custom";
 }
 
 function seconds(time: number): number { return time / TICKS; }
@@ -354,7 +369,8 @@ export class CenatPrimarySession {
 				params: buildDefaultParamValues(getBuiltInElementParams({ type: "video" })),
 			} satisfies VideoElement;
 		});
-		const canvasSize = aspectSize({ aspect: canonicalProject.aspect, first: sources[0] });
+		const canvasSize = aspectSize({ aspect: canonicalProject.aspect,
+			first: sources.find((item) => item.id === canonicalProject.clips[0]?.assetId), canvas: canonicalProject.canvas });
 		const end = Math.max(0, ...elements.map((element) => seconds(element.startTime + element.duration)));
 		const overlay: OverlayTrack[] = [];
 		const audio: AudioTrack[] = [];
@@ -1072,7 +1088,20 @@ export class CenatPrimarySession {
 				label: bookmark.note || original?.label || "Marker", color: bookmark.color || original?.color || "#f5c542",
 				...(bookmark.duration !== undefined ? { end: at + seconds(bookmark.duration) } : { end: undefined }) };
 		});
-		const candidate = { ...this.original, name: project.metadata.name, clips: graphics.clips,
+		const first = this.assets.find((item) => item.id === this.original.clips[0]?.assetId);
+		const aspect = aspectForCanvas({ size: canvas, original: this.original, first });
+		const nativeFps = project.settings.fps.numerator / project.settings.fps.denominator;
+		if (![24, 25, 30, 50, 60].includes(nativeFps)) throw new Error("Choose 24, 25, 30, 50 or 60 fps before saving to Cenat.");
+		const background = project.settings.background;
+		const backgroundChanged = background.type === "color" && background.color !== (this.original.canvas?.background || "#000000");
+		const nextCanvas = this.original.canvas || aspect === "custom" || backgroundChanged ? {
+			...(this.original.canvas || {}),
+			...(aspect === "custom" ? { width: canvas.width, height: canvas.height } : {}),
+			...(backgroundChanged ? { background: background.color } : {}),
+		} : undefined;
+		const candidate = { ...this.original, name: project.metadata.name, aspect,
+			...(this.original.fps !== undefined || nativeFps !== 30 ? { fps: nativeFps } : {}),
+			...(nextCanvas ? { canvas: nextCanvas } : {}), clips: graphics.clips,
 			...(this.original.tracks || tracks.length ? { tracks } : {}),
 			...(this.original.markers || markers.length ? { markers } : {}),
 			...(text.textLanes || graphics.laneCount !== undefined ? {
@@ -1093,7 +1122,7 @@ export class CenatPrimarySession {
 				if (!element.cenatEdit) return element;
 				const clip = canonical.clips.find((candidate) => candidate.id === element.id);
 				if (!clip) return element;
-				const edit = { ...element.cenatEdit, clip: structuredClone(clip) };
+				const edit = { ...element.cenatEdit, clip: structuredClone(clip), aspect: canonical.aspect, fps: canonical.fps || 30 };
 				if (element.mediaId !== edit.proxyMediaId || edit.proxyMediaId === edit.sourceMediaId) {
 					return { ...element, cenatEdit: edit };
 				}
