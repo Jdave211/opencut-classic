@@ -4,6 +4,10 @@ This is the original OpenCut codebase. It's archived and no longer maintained.
 
 The rewrite is happening at [opencut-app/opencut](https://github.com/opencut-app/opencut).
 
+## Cenat integration fork
+
+This fork is being evaluated as a parallel editor for Cenat. The existing Cenat editor remains available while capabilities are migrated and checked end to end. See the [migration plan](docs/cenat-migration.md) for the current baseline, capability map, and acceptance gates.
+
 ## Sponsors
 
 Thanks to [Vercel](https://vercel.com?utm_source=github-opencut&utm_campaign=oss) and [fal.ai](https://fal.ai?utm_source=github-opencut&utm_campaign=oss) for their support of open-source software.
@@ -159,4 +163,3 @@ See our [Contributing Guide](.github/CONTRIBUTING.md) for detailed setup instruc
 ---
 
 ![Star History Chart](https://api.star-history.com/svg?repos=opencut-app/opencut&type=Date)
-
