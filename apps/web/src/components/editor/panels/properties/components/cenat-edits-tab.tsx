@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useEditor } from "@/editor/use-editor";
 import { processMediaAssets } from "@/media/processing";
-import { renderCenatClip } from "@/lib/cenat-proxy";
+import { CENAT_API_ORIGIN, renderCenatClip } from "@/lib/cenat-proxy";
 import type { VideoElement } from "@/timeline/types";
 import { roundMediaTime } from "@/wasm/media-time-rounding";
 import { getCenatPrimarySession } from "@/lib/cenat-primary";
@@ -127,7 +127,7 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 	const transition = transitionOf(draft.transition);
 	useEffect(() => {
 		let active = true;
-		void fetch("http://127.0.0.1:3001/api/editor/catalog")
+		void fetch(`${CENAT_API_ORIGIN}/api/editor/catalog`)
 			.then((response) => response.ok ? response.json() : null)
 			.then((value: Catalog | null) => { if (active && value) setCatalog(value); })
 			.catch(() => {});
@@ -179,7 +179,7 @@ export function CenatEditsTab({ element, trackId, section }: { element: VideoEle
 		setProgress(0);
 		try {
 			if (section === "transitions") {
-				const response = catalog ? null : await fetch("http://127.0.0.1:3001/api/editor/catalog");
+				const response = catalog ? null : await fetch(`${CENAT_API_ORIGIN}/api/editor/catalog`);
 				if (response && !response.ok) throw new Error("Could not load transition timing.");
 				const timingCatalog: Catalog = catalog || await response!.json();
 				const main = editor.scenes.getActiveSceneOrNull()?.tracks.main;

@@ -6,6 +6,7 @@ import { buildTextElement } from "@/timeline/element-utils";
 import type { MediaTime } from "@/wasm";
 import { roundMediaTime } from "@/wasm/media-time-rounding";
 import { getCenatPrimarySession } from "@/lib/cenat-primary";
+import { FONT_SIZE_SCALE_REFERENCE } from "@/text/typography";
 
 export function TextView({ defaultKind = "text" }: { defaultKind?: "text" | "subtitle" }) {
 	const editor = useEditor();
@@ -22,7 +23,7 @@ export function TextView({ defaultKind = "text" }: { defaultKind?: "text" | "sub
 			raw: cenat ? { name: kind === "subtitle" ? "Caption" : "Title",
 				duration: roundMediaTime({ time: Math.min(available, 3 * 120_000) }),
 				params: { content: kind === "subtitle" ? "New caption" : "New title", fontFamily: "Arial",
-					fontSize: Math.round(canvas.height * (kind === "subtitle" ? 0.045 : 0.08)),
+					fontSize: FONT_SIZE_SCALE_REFERENCE * (kind === "subtitle" ? 0.045 : 0.08),
 					"transform.positionY": kind === "subtitle" ? canvas.height * 0.35 : 0 } } : DEFAULTS.text.element,
 			startTime: currentTime,
 		});
@@ -48,7 +49,7 @@ export function TextView({ defaultKind = "text" }: { defaultKind?: "text" | "sub
 					name: getCenatPrimarySession() ? (defaultKind === "subtitle" ? "Caption" : "Title") : DEFAULTS.text.element.name,
 					content: getCenatPrimarySession() ? (defaultKind === "subtitle" ? "New caption" : "New title") : "Default text",
 					...(getCenatPrimarySession() ? { cenatTextKind: defaultKind,
-						fontSize: Math.round(editor.project.getActive().settings.canvasSize.height * (defaultKind === "subtitle" ? 0.045 : 0.08)) } : {}),
+						fontSize: FONT_SIZE_SCALE_REFERENCE * (defaultKind === "subtitle" ? 0.045 : 0.08) } : {}),
 				}}
 				aspectRatio={1}
 				onAddToTimeline={({ currentTime }) => handleAddToTimeline({ currentTime, kind: defaultKind })}

@@ -1,4 +1,6 @@
-export const CENAT_API_ORIGIN = "http://127.0.0.1:3001";
+// Same-origin route served by Next.js. The browser never needs to reach the local
+// Cenat service on a different origin, which also works in embedded browsers.
+export const CENAT_API_ORIGIN = "/cenat";
 const MEDIA_CHUNK_BYTES = 8 * 1024 * 1024;
 
 type ExportJob = {
@@ -14,10 +16,12 @@ type ExportJob = {
 
 export async function copyLocalVideo({ url, knownBytes }: { url: string; knownBytes?: number }): Promise<Blob> {
 	let bytes = knownBytes;
+	let contentType = "video/mp4";
 	if (!bytes) {
 		const head = await fetch(url, { method: "HEAD" });
 		if (!head.ok) throw new Error("The rendered video is unavailable.");
 		bytes = Number(head.headers.get("Content-Length"));
+		contentType = head.headers.get("Content-Type") || contentType;
 	}
 	if (!Number.isSafeInteger(bytes) || bytes <= 0)
 		throw new Error("The video size could not be verified.");
@@ -32,7 +36,7 @@ export async function copyLocalVideo({ url, knownBytes }: { url: string; knownBy
 			throw new Error("A video part was incomplete.");
 		parts.push(part);
 	}
-	return new Blob(parts, { type: "video/mp4" });
+	return new Blob(parts, { type: contentType });
 }
 
 export async function renderCenatClip({

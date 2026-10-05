@@ -7,11 +7,16 @@ import { roundMediaTime } from "@/wasm/media-time-rounding";
 import type { MediaTime } from "@/wasm";
 import { CURRENT_PROJECT_VERSION } from "@/services/storage/migrations";
 import type { EditorCore } from "@/core";
-import { renderCenatClip } from "@/lib/cenat-proxy";
+import { CENAT_API_ORIGIN, copyLocalVideo, renderCenatClip } from "@/lib/cenat-proxy";
+import { FONT_SIZE_SCALE_REFERENCE } from "@/text/typography";
 
 const CHANNEL = "cenat-primary-editor";
 const TICKS = 120_000;
-const API = "http://127.0.0.1:3001";
+const API = CENAT_API_ORIGIN;
+function cenatUrl(path: string): string {
+	if (!path.startsWith("/")) throw new Error("Cenat returned an invalid media URL.");
+	return `${API}${path}`;
+}
 
 type CenatClip = {
 	id: string; assetId: string; label?: string; in: number; out: number;
@@ -163,7 +168,7 @@ function textParams({ overlay, canvas }: { overlay: CenatOverlay; canvas: { widt
 		...buildDefaultParamValues(getBuiltInElementParams({ type: "text" })),
 		content: overlay.text || "Text",
 		fontFamily: typeof overlay.font === "string" ? overlay.font : "Arial",
-		fontSize: overlay.size * canvas.height,
+		fontSize: overlay.size * FONT_SIZE_SCALE_REFERENCE,
 		color: overlay.color,
 		fontWeight: typeof overlay.weight === "number" && overlay.weight >= 600 ? "bold" : "normal",
 		fontStyle: overlay.italic ? "italic" : "normal",
@@ -213,13 +218,20 @@ export class CenatPrimarySession {
 	}
 
 	static async open({ id, onProgress }: { id: string; onProgress?: (message: string) => void }): Promise<{ session: CenatPrimarySession; project: TProject; media: MediaAsset[] }> {
-		const reply = await request({ projectId: id, type: "ready" });
+		const reply = await request({ projectId: id, type: "ready" }).catch((error: unknown) => {
+			throw new Error(`Cenat project handshake failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+		});
 		if (!reply.project || !reply.assets || !reply.revision) throw new Error("Cenat sent an incomplete project.");
 		const canonicalProject = reply.project;
 		const canonicalAssets = reply.assets;
-		const catalogResponse = await fetch(`${API}/api/editor/catalog`);
+		onProgress?.("Loading editing controls…");
+		const catalogResponse = await fetch(`${API}/api/editor/catalog`).catch(() => {
+			throw new Error("The Cenat editing controls could not be reached through this editor.");
+		});
 		if (!catalogResponse.ok) throw new Error("Could not load Cenat transition timing.");
-		const catalog: { transitions: { id: string; overlap: boolean }[]; fonts: string[] } = await catalogResponse.json();
+		const catalog: { transitions: { id: string; overlap: boolean }[]; fonts: string[] } = await catalogResponse.json().catch(() => {
+			throw new Error("The Cenat editing controls returned an incomplete response.");
+		});
 		const overlapIds = new Set(catalog.transitions.filter((entry) => entry.overlap).map((entry) => entry.id));
 		const fontIds = new Set(catalog.fonts);
 		const session = new CenatPrimarySession({ id, project: canonicalProject, assets: canonicalAssets, revision: reply.revision, overlapIds, fontIds });
@@ -231,16 +243,16 @@ export class CenatPrimarySession {
 		const media: MediaAsset[] = [];
 		for (const [index, source] of sources.entries()) {
 			onProgress?.(`Loading source media ${index + 1} of ${sources.length}…`);
-			const response = await fetch(new URL(source.url, API));
-			if (!response.ok) throw new Error(`Could not load ${source.name}.`);
-			const blob = await response.blob();
-			const file = new File([blob], source.name || `${source.id}.mp4`, { type: response.headers.get("Content-Type") || "video/mp4" });
+			const blob = await copyLocalVideo({ url: cenatUrl(source.url) }).catch((error: unknown) => {
+				throw new Error(`Could not load ${source.name}: ${error instanceof Error ? error.message : "The download stopped."}`);
+			});
+			const file = new File([blob], source.name || `${source.id}.mp4`, { type: blob.type });
 			media.push({
 				id: source.id, name: source.name, file, url: URL.createObjectURL(file),
 				type: source.kind === "image" ? "image" : source.kind === "audio" ? "audio" : "video",
 				width: source.width, height: source.height, duration: source.duration,
 				hasAudio: source.hasAudio, fps: canonicalProject.fps || 30,
-				thumbnailUrl: source.thumbnail ? new URL(source.thumbnail, API).href : undefined,
+				thumbnailUrl: source.thumbnail ? cenatUrl(source.thumbnail) : undefined,
 			});
 		}
 		const scene = buildDefaultScene({ name: "Main scene", isMain: true });
@@ -409,15 +421,14 @@ export class CenatPrimarySession {
 		if (!Array.isArray(job.result)) throw new Error("The imported media is missing.");
 		const media: MediaAsset[] = [];
 		for (const source of job.result) {
-			const response = await fetch(new URL(source.url, API));
-			if (!response.ok) throw new Error(`Could not load ${source.name}.`);
-			const file = new File([await response.blob()], source.name, { type: response.headers.get("Content-Type") || "video/mp4" });
+			const blob = await copyLocalVideo({ url: cenatUrl(source.url) });
+			const file = new File([blob], source.name, { type: blob.type });
 			media.push({
 				id: source.id, name: source.name, file, url: URL.createObjectURL(file),
 				type: source.kind === "image" ? "image" : source.kind === "audio" ? "audio" : "video",
 				width: source.width, height: source.height, duration: source.duration,
 				hasAudio: source.hasAudio, fps: this.original.fps || 30,
-				thumbnailUrl: source.thumbnail ? new URL(source.thumbnail, API).href : undefined,
+				thumbnailUrl: source.thumbnail ? cenatUrl(source.thumbnail) : undefined,
 			});
 		}
 		this.assets.push(...job.result.filter((asset) => !this.assets.some((known) => known.id === asset.id)));
@@ -528,7 +539,7 @@ export class CenatPrimarySession {
 					"background.cornerRadius", "background.paddingX", "background.paddingY", "background.offsetX", "background.offsetY",
 					"transform.scaleX", "transform.scaleY", "opacity", "blendMode"];
 				if (unsupported.some((key) => element.params[key] !== defaults[key]))
-					throw new Error(`Some OpenCut text controls on ${element.name} have no Cenat render equivalent yet. Use the Cenat text style tab.`);
+					throw new Error(`Some text controls on ${element.name} have no render equivalent yet. Use the text style tab.`);
 				const elementKind = textKind({ element, track: row });
 				const base = element.cenatOverlays?.[0]?.overlay;
 				const original = isCenatOverlay(base) ? base : undefined;
@@ -556,7 +567,7 @@ export class CenatPrimarySession {
 					const changed = (key: typeof TEXT_PARAM_KEYS[number]) => !expected || element.params[key] !== expected[key];
 					const x = Math.max(0.05, Math.min(0.95, 0.5 + paramNumber({ element, key: "transform.positionX", fallback: 0 }) / canvas.width));
 					const y = Math.max(0.05, Math.min(0.95, 0.5 + paramNumber({ element, key: "transform.positionY", fallback: 0 }) / canvas.height));
-					const size = Math.max(0.025, Math.min(0.3, paramNumber({ element, key: "fontSize", fallback: 48 }) / canvas.height));
+					const size = Math.max(0.025, Math.min(0.3, paramNumber({ element, key: "fontSize", fallback: 5 }) / FONT_SIZE_SCALE_REFERENCE));
 					const next: CenatOverlay = {
 						...basis, id: isCenatOverlay(oldPart) ? oldPart.id : `${element.id}:${clip.id}`,
 						kind: elementKind, text: content, start: sourceStart, end: sourceEnd,
@@ -649,7 +660,7 @@ export class CenatPrimarySession {
 		for (const track of [...main.tracks.overlay, ...main.tracks.audio]) {
 			if (track.type === "text") continue;
 			if (track.type !== "video" && track.type !== "audio") {
-				if (track.elements.length) throw new Error(`${track.name} contains an OpenCut layer that cannot be saved to Cenat. Add text through the clip's Text controls for now.`);
+				if (track.elements.length) throw new Error(`${track.name} contains a layer that cannot be saved. Add text through the clip's Text controls for now.`);
 				continue;
 			}
 			const oldTrack = this.original.tracks?.find((candidate) => candidate.id === track.id);
@@ -795,7 +806,7 @@ export class CenatPrimarySession {
 		}
 		if (!job.url?.startsWith("/exports/")) throw new Error("The export is missing its video file.");
 		onProgress?.(100);
-		return new URL(job.url, API).href;
+		return cenatUrl(job.url);
 	}
 
 	async preview({ project, onProgress }: {
@@ -819,7 +830,7 @@ export class CenatPrimarySession {
 		}
 		if (!job.url?.startsWith("/previews/")) throw new Error("The exact preview is missing its video file.");
 		onProgress?.(100);
-		return new URL(job.url, API).href;
+		return cenatUrl(job.url);
 	}
 
 	clear(): void { this.unbindSelection?.(); this.unbindSelection = null; if (active === this) active = null; }

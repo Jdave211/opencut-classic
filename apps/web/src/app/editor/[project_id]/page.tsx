@@ -17,7 +17,7 @@ import { MigrationDialog } from "@/project/components/migration-dialog";
 import { usePanelStore } from "@/editor/panel-store";
 import { usePasteMedia } from "@/media/use-paste-media";
 import { MobileGate } from "@/components/editor/mobile-gate";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useEditor } from "@/editor/use-editor";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -65,7 +65,7 @@ function DegradedRendererBanner() {
 
 	return (
 		<div className="bg-accent border-b h-9 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-			<span>For the best experience, open OpenCut in Chrome.</span>
+			<span>For the best experience, open {getCenatPrimarySession() ? "Cenat" : "OpenCut"} in Chrome.</span>
 			<Button
 				variant="text"
 				size="icon"
@@ -80,6 +80,9 @@ function DegradedRendererBanner() {
 }
 
 function EditorLayout() {
+	useEffect(() => {
+		if (getCenatPrimarySession()) document.title = "Cenat editor";
+	}, []);
 	usePasteMedia();
 	const { panels, setPanel } = usePanelStore();
 	const activeScene = useEditor((editor) =>

@@ -21,6 +21,18 @@ interface EditorProviderProps {
 	children: React.ReactNode;
 }
 
+function importedCenatSourceId(projectId: string): string | null {
+	try {
+		const raw: unknown = JSON.parse(localStorage.getItem("cenat.importedProjects.v1") || "{}");
+		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+		for (const [key, value] of Object.entries(raw)) {
+			const sourceId = key.split(":")[0];
+			if (value === projectId && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(sourceId)) return sourceId;
+		}
+	} catch { /* An unrelated browser project can still open normally. */ }
+	return null;
+}
+
 export function EditorProvider({ projectId, children }: EditorProviderProps) {
 	const activeProject = useEditor((e) => e.project.getActiveOrNull());
 	const router = useRouter();
@@ -38,21 +50,54 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 		const editor = EditorCore.getInstance();
 
 		const loadProject = async () => {
+			let stage = "Starting the editor";
 			try {
 				setIsLoading(true);
+				const params = new URLSearchParams(window.location.search);
+				const isCenatProject = params.get("cenat") === "1";
+				if (isCenatProject) document.title = "Cenat editor";
+				if (!isCenatProject && params.get("standalone") !== "1") {
+					const sourceId = importedCenatSourceId(projectId);
+					if (sourceId) {
+						window.location.replace(`${process.env.NEXT_PUBLIC_CENAT_HOME_URL || "http://localhost:5173"}/editor/${sourceId}`);
+						return;
+					}
+				}
+				stage = "Preparing video playback";
 				await initializeGpuRenderer();
 				editor.renderer.setDegraded(!isGpuAvailable());
-				const isCenatProject = new URLSearchParams(window.location.search).get("cenat") === "1";
 				if (isCenatProject) {
+					stage = "Opening the Cenat project";
 					const loaded = await CenatPrimarySession.open({ id: projectId, onProgress: setProgress });
 					if (cancelled) { loaded.session.clear(); return; }
+					stage = "Loading project media into the editor";
 					editor.project.loadExternalProject({
 						project: loaded.project,
 						media: loaded.media,
 						 save: (project) => loaded.session.save({ project }),
 					});
+					stage = "Preparing clip previews";
 					loaded.session.bindPreview({ editor });
-				} else await editor.project.loadProject({ id: projectId });
+				} else {
+					stage = "Opening the browser project";
+					await editor.project.loadProject({ id: projectId });
+					if (params.get("standalone") !== "1") {
+						const importedClips = editor.project.getActive().scenes
+							.find((scene) => scene.isMain)?.tracks.main.elements
+							.filter((element) => element.type === "video" && element.cenatEdit) || [];
+						const importedClip = importedClips[0];
+						const sourceAssetId = importedClip?.type === "video" ? importedClip.cenatEdit?.clip.assetId : undefined;
+						if (typeof sourceAssetId === "string" && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(sourceAssetId)) {
+							const destination = new URL(process.env.NEXT_PUBLIC_CENAT_HOME_URL || "http://localhost:5173");
+							destination.searchParams.set("sourceAsset", sourceAssetId);
+							destination.searchParams.set("sourceName", editor.project.getActive().metadata.name);
+							const sourceClips = importedClips.flatMap((element) => element.type === "video" && typeof element.cenatEdit?.clip.id === "string" ? [element.cenatEdit.clip.id] : []);
+							if (sourceClips.length) destination.searchParams.set("sourceClips", sourceClips.slice(0, 8).join(","));
+							window.location.replace(destination.href);
+							return;
+						}
+					}
+				}
 
 				if (cancelled) return;
 
@@ -84,7 +129,7 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 						setError(wasmPanic);
 					} else {
 						setError(
-							err instanceof Error ? err.message : "Failed to load project",
+							err instanceof Error ? `${stage}: ${err.message}` : `Could not load project during ${stage.toLowerCase()}`,
 						);
 					}
 					setIsLoading(false);

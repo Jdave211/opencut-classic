@@ -4,6 +4,7 @@ import { useEditor } from "@/editor/use-editor";
 import { buildTextElement } from "@/timeline/element-utils";
 import type { VideoElement } from "@/timeline/types";
 import { roundMediaTime } from "@/wasm/media-time-rounding";
+import { FONT_SIZE_SCALE_REFERENCE } from "@/text/typography";
 
 const TICKS = 120_000;
 
@@ -20,7 +21,7 @@ export function CenatTextTools({ clip }: { clip: VideoElement }) {
 				duration: roundMediaTime({ time: Math.min(clip.duration, 3 * TICKS) }),
 				params: {
 					content: kind === "subtitle" ? "New caption" : "New title",
-					fontFamily: "Arial", fontSize: Math.round(canvas.height * (kind === "subtitle" ? 0.045 : 0.08)),
+					fontFamily: "Arial", fontSize: FONT_SIZE_SCALE_REFERENCE * (kind === "subtitle" ? 0.045 : 0.08),
 					"transform.positionY": kind === "subtitle" ? canvas.height * 0.35 : 0,
 				},
 			},

@@ -38,7 +38,7 @@ export function EditorHeader() {
 				<EditableProjectName />
 			</div>
 			<nav className="flex items-center gap-2">
-				<FeedbackPopover />
+				{!getCenatPrimarySession() && <FeedbackPopover />}
 						{getCenatPrimarySession() ? <><CenatPreviewButton /><CenatExportButton /></> : <ExportButton />}
 				<ThemeToggle />
 			</nav>
@@ -128,11 +128,11 @@ function ProjectDropdown() {
 				<DropdownMenuTrigger asChild>
 					<Button variant="ghost" size="icon" className="p-1 rounded-sm size-8">
 						<Image
-							src={DEFAULT_LOGO_URL}
+							src={getCenatPrimarySession() ? "/cenat-mark.svg" : DEFAULT_LOGO_URL}
 							alt="Project thumbnail"
 							width={32}
 							height={32}
-							className="invert dark:invert-0 size-5"
+							className={getCenatPrimarySession() ? "size-5" : "invert dark:invert-0 size-5"}
 						/>
 					</Button>
 				</DropdownMenuTrigger>
@@ -152,8 +152,7 @@ function ProjectDropdown() {
 						Shortcuts
 					</DropdownMenuItem>
 
-					<DropdownMenuSeparator />
-
+					{!getCenatPrimarySession() && <><DropdownMenuSeparator />
 					<DropdownMenuItem asChild icon={<FaDiscord className="size-4!" />}>
 						<Link
 							href={SOCIAL_LINKS.discord}
@@ -162,7 +161,7 @@ function ProjectDropdown() {
 						>
 							Discord
 						</Link>
-					</DropdownMenuItem>
+					</DropdownMenuItem></>}
 				</DropdownMenuContent>
 			</DropdownMenu>
 			<RenameProjectDialog
