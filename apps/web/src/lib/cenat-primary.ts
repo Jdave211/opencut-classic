@@ -232,7 +232,7 @@ export class CenatPrimarySession {
 		if (!reply.project || !reply.assets || !reply.revision) throw new Error("Cenat sent an incomplete project.");
 		const canonicalProject = reply.project;
 		const canonicalAssets = reply.assets;
-		onProgress?.("Loading editing controls…");
+		onProgress?.("Opening project…");
 		const catalogResponse = await fetch(`${API}/api/editor/catalog`).catch(() => {
 			throw new Error("The Cenat editing controls could not be reached through this editor.");
 		});
@@ -249,15 +249,15 @@ export class CenatPrimarySession {
 		]);
 		const sources = canonicalAssets.filter((asset) => referenced.has(asset.id));
 		const media: MediaAsset[] = [];
-		for (const [index, source] of sources.entries()) {
-			onProgress?.(`Loading source media ${index + 1} of ${sources.length}…`);
-			const blob = await copyLocalVideo({ url: cenatUrl(source.url) }).catch((error: unknown) => {
-				throw new Error(`Could not load ${source.name}: ${error instanceof Error ? error.message : "The download stopped."}`);
-			});
-			const file = new File([blob], source.name || `${source.id}.mp4`, { type: blob.type });
+		for (const source of sources) {
+			const sourceUrl = cenatUrl(source.url);
+			const type = source.kind === "image" ? "image" : source.kind === "audio" ? "audio" : "video";
+			// External projects keep their media on the local Cenat server. The
+			// placeholder satisfies local-file-only UI controls; decoders use sourceUrl.
+			const file = new File([], source.name || source.id, { type: type === "image" ? "image/png" : type === "audio" ? "audio/mpeg" : "video/mp4" });
 			media.push({
-				id: source.id, name: source.name, file, url: URL.createObjectURL(file),
-				type: source.kind === "image" ? "image" : source.kind === "audio" ? "audio" : "video",
+				id: source.id, name: source.name, file, url: sourceUrl, sourceUrl,
+				type,
 				width: source.width, height: source.height, duration: source.duration,
 				hasAudio: source.hasAudio, fps: canonicalProject.fps || 30,
 				thumbnailUrl: source.thumbnail ? cenatUrl(source.thumbnail) : undefined,
@@ -572,10 +572,11 @@ export class CenatPrimarySession {
 			const still = current.type === "image" ? await renderCenatStill({ videoBlob: rendered.blob }) : null;
 			const file = still ? new File([still], `preview-${elementId}.png`, { type: "image/png" })
 				: new File([rendered.blob], `preview-${elementId}.mp4`, { type: "video/mp4" });
-			const asset: MediaAsset = { id: crypto.randomUUID(), name: file.name, type: still ? "image" : "video", file,
+			const sourceAsset = editor.media.getAssets().find((item) => item.id === current.cenatEdit?.sourceMediaId);
+			const asset: MediaAsset = { id: crypto.randomUUID(), name: sourceAsset?.name || current.name, type: still ? "image" : "video", file,
 				url: URL.createObjectURL(file), duration: rendered.duration, width: rendered.width, height: rendered.height,
 				hasAudio: !still && source.volume !== 0, ephemeral: true,
-				thumbnailUrl: editor.media.getAssets().find((item) => item.id === current.cenatEdit?.sourceMediaId)?.thumbnailUrl };
+				thumbnailUrl: sourceAsset?.thumbnailUrl };
 			editor.media.setAssets({ assets: [...editor.media.getAssets(), asset] });
 			const sourceDuration = roundMediaTime({ time: rendered.duration * TICKS });
 			if (sourceDuration < current.duration - TICKS / element.cenatEdit.fps) return;

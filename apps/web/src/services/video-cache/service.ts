@@ -2,6 +2,7 @@ import {
 	Input,
 	ALL_FORMATS,
 	BlobSource,
+	UrlSource,
 	CanvasSink,
 	type WrappedCanvas,
 } from "mediabunny";
@@ -26,13 +27,15 @@ export class VideoCache {
 	async getFrameAt({
 		mediaId,
 		file,
+		sourceUrl,
 		time,
 	}: {
 		mediaId: string;
 		file: File;
+		sourceUrl?: string;
 		time: number;
 	}): Promise<WrappedCanvas | null> {
-		await this.ensureSink({ mediaId, file });
+		await this.ensureSink({ mediaId, file, sourceUrl });
 
 		const sinkData = this.sinks.get(mediaId);
 		if (!sinkData) return null;
@@ -235,9 +238,11 @@ export class VideoCache {
 	private async ensureSink({
 		mediaId,
 		file,
+		sourceUrl,
 	}: {
 		mediaId: string;
 		file: File;
+		sourceUrl?: string;
 	}): Promise<void> {
 		if (this.sinks.has(mediaId)) return;
 
@@ -246,7 +251,7 @@ export class VideoCache {
 			return;
 		}
 
-		const initPromise = this.initializeSink({ mediaId, file });
+		const initPromise = this.initializeSink({ mediaId, file, sourceUrl });
 		this.initPromises.set(mediaId, initPromise);
 
 		try {
@@ -258,12 +263,14 @@ export class VideoCache {
 	private async initializeSink({
 		mediaId,
 		file,
+		sourceUrl,
 	}: {
 		mediaId: string;
 		file: File;
+		sourceUrl?: string;
 	}): Promise<void> {
 		const input = new Input({
-			source: new BlobSource(file),
+			source: sourceUrl ? new UrlSource(sourceUrl) : new BlobSource(file),
 			formats: ALL_FORMATS,
 		});
 

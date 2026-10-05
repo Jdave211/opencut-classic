@@ -2,6 +2,8 @@
 
 The Cenat home page opens the upgraded editor. Cenat remains the owner of the project document and source media. The editor builds native tracks from the current Cenat snapshot and saves edits back to the same Cenat project. Export uses Cenat's renderer so existing effects are retained.
 
+Opening a project now references its source media directly through range requests to the local Cenat server. The workspace appears after project metadata loads; opening no longer copies every full video into browser memory. Clip playback reads the required ranges, while exact previews render separately when an effect needs them.
+
 | Capability | Primary editor | Render/export |
 | --- | --- | --- |
 | Main cuts, trims, order, speed, source audio | Native timeline and clip controls; changes save to Cenat | Exact Cenat render |

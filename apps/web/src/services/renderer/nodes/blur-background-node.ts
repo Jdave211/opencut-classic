@@ -6,6 +6,7 @@ export type BlurBackgroundNodeParams = {
 	mediaId: string;
 	url: string;
 	file: File;
+	sourceUrl?: string;
 	mediaType: "video" | "image";
 	duration: number;
 	timeOffset: number;
